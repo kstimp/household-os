@@ -1,6 +1,6 @@
 # Household OS: System Design Document
 
-This document serves as the foundational specification for **Household OS**, a unified, local-first web application designed to consolidate household operations (meal planning, grocery automation, personal finance, and ambient notifications) into a single space, reducing reliance on fragmented SaaS applications.
+This document serves as the foundational specification for **Household OS**, a unified, cloud-hosted, family-private web application designed to consolidate household operations (meal planning, grocery automation, personal finance, and ambient notifications) into a single space, reducing reliance on fragmented SaaS applications.
 
 ---
 
@@ -20,43 +20,43 @@ This document serves as the foundational specification for **Household OS**, a u
 The design deliberately keeps ingredients as **free text** and uses an **LLM with a human in the loop** as the aggregation engine, rather than encoding a canonical ingredient catalog, unit-conversion tables, or densities. *Design note: do not "upgrade" this into a controlled-vocabulary ingredient engine — the human-in-the-loop review is the intended smoothing mechanism for fuzzy matching and unit math.*
 
 * **Recipe Store:** Lightweight recipe records — title, **free-text ingredient lines** (no parsing into structured quantities), servings, tags/allergens, rating, and source. America's Test Kitchen is treated as a **manual-entry source** (paywalled and bot-hostile); ingestion is manual entry or paste-and-parse, with schema.org/Recipe JSON-LD URL import as a possible nice-to-have.
-* **Scheduler:** A calendar interface to assign recipes to days. Planning also runs *backwards* from on-hand items (see Use-It-Up inventory in §2.5).
+* **Scheduler:** A calendar interface to assign recipes to days. Planning also runs *backwards* from on-hand items (see Use-It-Up inventory in §2.2).
 * **LLM Aggregation Worker (human-in-the-loop):** A backend worker calls the **Claude API** with the week's planned recipes (plus any use-it-up items) and returns a draft, aggregated shopping list. The human reviews/corrects it before it becomes the shopping list.
 
-### 2.5. Kitchen Inventory & Shopping Board
+### 2.2. Kitchen Inventory & Shopping Board
 Three small, single-purpose lists — note the first two are *opposite* in intent:
 
 * **Staples (passive — buy-suppression):** A curated set tracked as binary `have / running-low` (Tier 1, no quantities). Pre-checks the items you usually have so the weekly list doesn't re-ask every week. Purpose: push items *off* the list.
 * **Use-It-Up inventory (active — planning input):** Notable on-hand perishables/freezer items you want to cook down (e.g., flank steak, chicken thighs), with optional location and date-acquired. **Feeds the planner as an input** — Claude builds the week around using these first. An item leaves the list when assigned to a meal. Purpose: pull the *plan* toward itself. *(Optional later: "been in the freezer a while" nudges via the ambient feed.)*
 * **Unified Shopping Board (kanban):** One standing board with columns **Need → This week → Bought**. Both ad-hoc run-outs ("out of dish soap" — ideal e-ink quick-capture) and the weekly Claude-generated items flow onto it, tagged by source. The **This week** column is what Saturday's shop / the Whole Foods order draws from; checking items off is the same grocery check-off described in §6.2.
 
-### 2.2. Whole Foods Actuation Layer
-* **Cart Automation:** A background task (headless browser automation via Playwright) that logs into Whole Foods, translates the **This week** column of the shopping board (§2.5) into real products, matches them against user preferences, and populates the delivery cart for **manual final checkout** — the human verifies the order before purchase. (Reliability/auth specifics are an open spike; see §8.)
+### 2.3. Whole Foods Actuation Layer
+* **Cart Automation:** A background task (headless browser automation via Playwright) that logs into Whole Foods, translates the **This week** column of the shopping board (§2.2) into real products, matches them against user preferences, and populates the delivery cart for **manual final checkout** — the human verifies the order before purchase. (Reliability/auth specifics are an open spike; see §8.)
 
-### 2.3. Personal Finance (Actual Budget Integration)
+### 2.4. Personal Finance (Actual Budget Integration)
 The strategy is **wrap and delegate**: Actual owns the budgeting UX and remains the source of truth and the place you edit; Household OS wraps it so it feels like one product and mirrors summaries to the top level. Consistent with §2.6 — read-only mirror, edits delegated to Actual, never written back.
 
 * **Local Ledger:** A self-hosted instance of **Actual Budget** in Docker, hosted at a dedicated subdomain (e.g., `budget.<household-domain>`) behind the same reverse proxy and session/SSO as the rest of Household OS, with shared nav chrome so navigating into it feels in-product rather than like a separate app. Bank linking (SimpleFIN/GoCardless) is configured **natively inside Actual** — not reimplemented here.
 * **Summary Widgets:** The top-level dashboard surfaces category balances and monthly targets (read-only via Actual's REST API), each **deep-linking into the wrapped Actual app** for detail and editing.
-* **Overspend Alerts:** A worker polls category balances against their monthly targets and posts overspend / near-limit alerts into the ambient Family Feed (§2.4). Read-only — it observes Actual, never writes to it.
+* **Overspend Alerts:** A worker polls category balances against their monthly targets and posts overspend / near-limit alerts into the ambient Family Feed (§2.5). Read-only — it observes Actual, never writes to it.
 
-### 2.4. Unified Calendar, Tasks, & Home Status
+### 2.5. Unified Calendar, Tasks, & Home Status
 * **Aggregator:** Flattens data from each external surface into a unified "Family Feed," following the **mirror-or-own** rule in §2.6 — Calendar is mirrored read-only, Tasks/chores and the shopping board are owned.
 * **Home Assistant Bridge:** Pulls critical ambient notifications from Home Assistant (e.g., utility tracking, pet feeding status, security/door states).
 
 ### 2.6. Integration & Sync Model
 **Hard rule: no two-way sync, ever.** Bidirectional sync is where all conflict-resolution complexity lives. Every external surface sits in exactly one of two buckets:
 
-* **Mirror (read-only):** The Google product remains source of truth; Household OS only displays. No write-back.
+* **Mirror (read-only):** The external product remains source of truth (Google for calendar, Actual for finance); Household OS only displays. No write-back.
 * **Owned:** Household OS is source of truth; the corresponding Google product is *retired for that job*. The panel/app can edit and check off.
 
 | Surface | Bucket | Notes |
 |---|---|---|
 | **Calendar** | Mirror (read-only) | Google Calendar stays source of truth; family keeps adding events on their phones; panel displays only. |
-| **Grocery / shopping** | Owned | The §2.5 kanban board. Keep retired *for groceries*. |
+| **Grocery / shopping** | Owned | The §2.2 kanban board. Keep retired *for groceries*. |
 | **Tasks / chores** | Owned | Household OS is source of truth for shared household to-dos; the e-ink panel checks them off (§6.2). Google Tasks retired for household use; family adds chores via the app/panel. |
 | **Keep (general notes)** | Out of scope | Not integrated in v1. Keep stays as-is for ad-hoc family notes. |
-| **Finance** | Mirror (read-only) | Actual is source of truth and the edit surface, *wrapped* at a subdomain (§2.3). Dashboard mirrors summaries + overspend alerts; edits are a hand-off into Actual, not a sync. |
+| **Finance** | Mirror (read-only) | Actual is source of truth and the edit surface, *wrapped* at a subdomain (§2.4). Dashboard mirrors summaries + overspend alerts; edits are a hand-off into Actual, not a sync. |
 
 This keeps each integration a one-directional data flow — a read for mirrors, a write-through for owned surfaces — with no reconciliation logic.
 
@@ -123,7 +123,7 @@ graph TD
 * **Database:** **SQLite on a persistent volume** attached to the container. Stores custom application state, meal plan configurations, cached calendar entries, and internal tracking metadata.
 * **Application Server:** Node.js (Express/Fastify) or Python (FastAPI). Handles scheduling, integration scripts, and exposes a unified API.
 * **Edge / Auth:** **Cloudflare Access** fronts the web app, providing Google SSO + a family email allowlist at the edge (no custom auth code). See §4.
-* **Home-Side Agent:** A lightweight daemon on a home machine runs a **Cloudflare Tunnel**, exposing Home Assistant (LAN-only) to the cloud backend. The Whole Foods automation worker *may* also live here to use a residential IP (pending the spike in §7). Family members install nothing.
+* **Home-Side Agent:** A lightweight daemon on a home machine runs a **Cloudflare Tunnel**, exposing Home Assistant (LAN-only) to the cloud backend. The Whole Foods automation worker *may* also live here to use a residential IP (pending the spike in §8). Family members install nothing.
 
 ---
 
@@ -202,7 +202,7 @@ To balance the physical constraints of an e-ink panel (slow refresh rates, limit
   * Solidify the Playwright automation script to pipe lists to the Whole Foods cart.
 * [ ] **Phase 3: The Rich Web UI**
   * Build the mobile/desktop responsive views for scheduling meals and editing tasks.
-  * Integrate the unified Google Calendar/Tasks/Keep API endpoints.
+  * Wire up the unified feed per §2.6: Google Calendar mirrored read-only; Tasks/chores as a Household-OS-owned surface (not Google Tasks); Keep out of scope.
 * [ ] **Phase 4: E-Ink Frontend Implementation**
   * Design an e-ink-optimized CSS media query/route layout.
   * Set up the server-side screenshot generation worker.
