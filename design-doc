@@ -1,0 +1,36 @@
+# Household OS: System Design Document
+
+This document serves as the foundational specification for **Household OS**, a unified, local-first web application designed to consolidate household operations (meal planning, grocery automation, personal finance, and ambient notifications) into a single space, reducing reliance on fragmented SaaS applications.
+
+---
+
+## 1. Vision & Key Principles
+
+* **Ambient & Actionable:** The system serves two primary frontends: a fully featured web app for heavy lifting (mobile/desktop) and an e-ink kitchen display for ambient reference and quick, tactile interactions.
+* **Minimal Cost:** Zero or near-zero recurring monthly subscription fees. Leverages open-source tools and existing local hardware.
+* **Privacy & Local-First:** Sensitive data (finances, schedules, habits) is stored and processed locally within the home network whenever possible.
+* **Low Dependency & High Consolidation:** A single custom backend acts as an aggressive caching and aggregation layer, shielding the frontends from talking to multiple brittle external APIs.
+
+---
+
+## 2. Core Modules
+
+### 2.1. Meal Planner & Grocery Sync
+* **Recipe Caching:** Imports and parses family preferences and recipes (primarily optimized for America's Test Kitchen).
+* **Scheduler:** A calendar interface to assign meals to specific days.
+* **Grocery Generator:** Compiles an aggregated list of ingredients based on the selected meals, cross-referencing a local pantry inventory list.
+
+### 2.2. Whole Foods Actuation Layer
+* **Cart Automation:** A background task (utilizing headless browser automation via Playwright/Puppeteer) that logs into Whole Foods, translates the grocery list into real items, matches them against user preferences, and populates the delivery cart for manual final checkout.
+
+### 2.3. Personal Finance (Actual Budget Integration)
+* **Local Ledger:** Replaces YNAB with a self-hosted instance of **Actual Budget** running in Docker.
+* **Sync Engine:** Pulls budget category balances and monthly targets via Actual Budget’s REST API into the main household dashboard for high-level visibility.
+
+### 2.4. Unified Calendar, Tasks, & Home Status
+* **Aggregator:** Synchronizes and flattens data from Google Calendar, Google Tasks, Google Keep, and email notifications into a unified "Family Feed."
+* **Home Assistant Bridge:** Pulls critical ambient notifications from Home Assistant (e.g., utility tracking, pet feeding status, security/door states).
+
+---
+
+## 3. Architecture & Tech Stack
