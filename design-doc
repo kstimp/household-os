@@ -34,3 +34,84 @@ This document serves as the foundational specification for **Household OS**, a u
 ---
 
 ## 3. Architecture & Tech Stack
+
+```mermaid
+graph TD
+    %% External Spokes Layer
+    subgraph Spokes [EXTERNAL SPOKES]
+        A[Google Workspace]
+        B[Actual Budget API]
+        C[Home Assistant]
+        D[Whole Foods / Web]
+    end
+
+    %% The Hub Backend Layer
+    subgraph Hub [THE HUB - Core Engine]
+        E[Cron / Workers<br>Fetch & aggregate data]
+        F[(SQLite Cache<br>Local-first ledger & states)]
+        G[Playwright / Puppeteer<br>Cart automation & rendering]
+        H[Unified REST / WS API]
+        
+        E --> F
+        G --> F
+        F --> H
+    end
+
+    %% Frontend Layer
+    subgraph Frontends [FRONTEND DISPLAY LAYER]
+        I[RICH WEB VIEW SPA<br>Mobile & Desktop targets<br>Full CRUD & Admin UI<br>Tailwind + JS]
+        J[E-INK DISPLAY LAYER<br>Low-power interactive UI<br>Static image generation<br>Lightweight touch handling]
+    end
+
+    %% Connections
+    A <--> E
+    B <--> E
+    C <--> E
+    D <--> G
+    
+    H <--> I
+    H <--> J
+```
+
+### 3.1. Infrastructure & Backend
+* **Host Environment:** Docker containers running on a local home server or Raspberry Pi.
+* **Database:** **SQLite**. Stores custom application state, meal plan configurations, cached calendar entries, and internal tracking metadata.
+* **Application Server:** Node.js (Express/Fastify) or Python (FastAPI). Handles scheduling, integration scripts, and exposes a unified API.
+
+---
+
+## 4. Frontend Strategies
+
+### 4.1. Rich Web Frontend (Mobile & Desktop)
+* **Tech Selection:** Responsive Single Page Application (SPA) styled with Tailwind CSS.
+* **Purpose:** The primary administrative control panel. Used on phones and laptops for intensive input tasks: modifying budget categories, mapping new recipes, managing deep settings, and initiating the Whole Foods checkout sequence.
+
+### 4.2. Interactive E-Ink Kitchen Display
+To balance the physical constraints of an e-ink panel (slow refresh rates, limited processing power) with the requirement for simple interactions, the display leverages a **Hybrid Rendering Strategy**:
+
+* **Complex Visuals (Pre-rendered):** The backend server runs a headless browser instance, loads the daily/weekly dashboard view, takes a highly stylized high-contrast PNG/BMP screenshot, and serves it.
+* **Interactive Layer (State Machine):** The display hardware (e.g., a touchscreen Waveshare panel powered by an ESP32, or a jailbroken e-reader) displays the static layout but maps coordinate-based touch zones for interactive elements.
+* **Supported Interactions:**
+    * **Checking off grocery/task items:** Tapping a box immediately updates the local UI array (toggling a strike-through visually) and fires an asynchronous, low-payload HTTP POST request back to the server.
+    * **Rating Meals:** Simple 1–5 star or Thumbs Up/Down touch zones next to the dinner slot that fire a background API update to the recipe database.
+* **Refresh Loop:** The screen performs a full visual clear and update once every 15–30 minutes for passive data changes (like calendar updates), but triggers a partial, localized refresh immediately upon user interaction to provide instant feedback.
+
+---
+
+## 5. Implementation Roadmap
+
+* [ ] **Phase 1: Environment & Finance Setup**
+  * Deploy self-hosted Actual Budget via Docker.
+  * Initialize the core backend project with SQLite.
+  * Build a worker to pull and cache budget balances.
+* [ ] **Phase 2: Meal & Cart Core**
+  * Port over the existing vibe-coded meal planner scripts into the Hub backend.
+  * Expose an endpoint that outputs the unified grocery list.
+  * Solidify the Playwright automation script to pipe lists to the Whole Foods cart.
+* [ ] **Phase 3: The Rich Web UI**
+  * Build the mobile/desktop responsive views for scheduling meals and editing tasks.
+  * Integrate the unified Google Calendar/Tasks/Keep API endpoints.
+* [ ] **Phase 4: E-Ink Frontend Implementation**
+  * Design an e-ink-optimized CSS media query/route layout.
+  * Set up the server-side screenshot generation worker.
+  * Configure hardware touch boundaries to map to the rating and check-off API endpoints.
