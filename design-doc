@@ -36,9 +36,11 @@ Three small, single-purpose lists — note the first two are *opposite* in inten
 ### 2.4. Personal Finance (Actual Budget Integration)
 The strategy is **wrap and delegate**: Actual owns the budgeting UX and remains the source of truth and the place you edit; Household OS wraps it so it feels like one product and mirrors summaries to the top level. Consistent with §2.6 — read-only mirror, edits delegated to Actual, never written back.
 
-* **Local Ledger:** A self-hosted instance of **Actual Budget** in Docker, hosted at a dedicated subdomain (e.g., `budget.<household-domain>`) behind the same reverse proxy and session/SSO as the rest of Household OS, with shared nav chrome so navigating into it feels in-product rather than like a separate app. Bank linking (SimpleFIN/GoCardless) is configured **natively inside Actual** — not reimplemented here.
-* **Summary Widgets:** The top-level dashboard surfaces category balances and monthly targets (read-only via Actual's REST API), each **deep-linking into the wrapped Actual app** for detail and editing.
-* **Overspend Alerts:** A worker polls category balances against their monthly targets and posts overspend / near-limit alerts into the ambient Family Feed (§2.5). Read-only — it observes Actual, never writes to it.
+* **Local Ledger:** A self-hosted instance of **Actual Budget** in Docker (`actualbudget/actual-server`, port 5006, data on a persistent volume at `/data`), hosted at a dedicated subdomain (e.g., `budget.<household-domain>`) behind the same reverse proxy and Cloudflare Access SSO as the rest of Household OS. Bank linking (SimpleFIN/GoCardless) is configured **natively inside Actual** — not reimplemented here. *Note: Actual has its own login (a single shared server password) layered behind Cloudflare Access; multi-user/OpenID is unnecessary given §4.2's no-roles model.*
+* **"Wrapped," not embedded:** Actual requires a secure context plus `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` headers to enable SharedArrayBuffer (its WASM SQLite engine). Those headers **preclude iframe-embedding** Actual inside the Household OS shell, and the reverse proxy must pass them through **without duplication** (duplicate COOP/COEP headers trigger a `SharedArrayBufferMissing` fatal error). "Feels in-product" therefore means a **shared subdomain, matching nav styling, and deep-links** — not an embedded frame.
+* **No REST API — a synced local copy.** Actual exposes **no REST/HTTP API**. The server is a sync store that cannot compute budgets; all budget logic lives in the **`@actual-app/api` Node.js library**, which downloads a *full local copy* of the budget into a `dataDir`, syncs, then answers queries like `getBudgetMonth('YYYY-MM')`. The finance worker therefore maintains its own synced copy on the volume and calls `sync()` before each read. *(Because the official API is Node-only, this nudges the Hub backend toward Node — see §3.1. A Python Hub would need `actualpy` or an `actual-http-api` sidecar.)*
+* **Summary Widgets:** The top-level dashboard surfaces category balances and monthly targets (read-only, via the synced `@actual-app/api` copy above), each **deep-linking into the wrapped Actual app** for detail and editing.
+* **Overspend Alerts:** A worker syncs the local copy and checks category balances against their monthly targets, posting overspend / near-limit alerts into the ambient Family Feed (§2.5). Read-only — it observes Actual, never writes to it. It reaches Actual over the **internal container network**, not through Cloudflare Access (which would block a non-browser client).
 
 ### 2.5. Unified Calendar, Tasks, & Home Status
 * **Aggregator:** Flattens data from each external surface into a unified "Family Feed," following the **mirror-or-own** rule in §2.6 — Calendar is mirrored read-only, Tasks/chores and the shopping board are owned.
@@ -69,7 +71,7 @@ graph TD
     %% External Spokes Layer
     subgraph Spokes [EXTERNAL SPOKES]
         A[Google Workspace]
-        B[Actual Budget API]
+        B[Actual Budget<br>sync server + @actual-app/api]
         D[Whole Foods / Web]
         K[Claude API<br>recipe list aggregation]
     end
@@ -121,7 +123,7 @@ graph TD
 ### 3.1. Infrastructure & Backend
 * **Host Environment:** A single **always-on cloud container** (e.g., Fly.io, Railway, or a small VPS) running the backend, the Playwright runtime, and cron workers. *Serverless platforms (Vercel, Cloudflare Workers) were rejected:* they don't accommodate a long-running headless browser, persistent local SQLite, or always-on cron without significant rework.
 * **Database:** **SQLite on a persistent volume** attached to the container. Stores custom application state, meal plan configurations, cached calendar entries, and internal tracking metadata.
-* **Application Server:** Node.js (Express/Fastify) or Python (FastAPI). Handles scheduling, integration scripts, and exposes a unified API.
+* **Application Server:** **Node.js (Express/Fastify) recommended** — Actual's only official API client (`@actual-app/api`) is Node-only, so a Node Hub can call it in-process (§2.4). Python (FastAPI) remains possible but would need `actualpy` or an `actual-http-api` sidecar for the finance integration. Handles scheduling, integration scripts, and exposes a unified API.
 * **Edge / Auth:** **Cloudflare Access** fronts the web app, providing Google SSO + a family email allowlist at the edge (no custom auth code). See §4.
 * **Home-Side Agent:** A lightweight daemon on a home machine runs a **Cloudflare Tunnel**, exposing Home Assistant (LAN-only) to the cloud backend. The Whole Foods automation worker *may* also live here to use a residential IP (pending the spike in §8). Family members install nothing.
 
@@ -144,7 +146,7 @@ graph TD
 * Token is rotatable (re-provision the panel) in case the device is lost or sold.
 
 ### 4.4. Secrets Management
-* **Integration secrets** (Google OAuth refresh tokens, Actual Budget creds, Home Assistant token, and any Whole Foods credential) require **encryption-at-rest, not hashing** — they must be replayed to external services.
+* **Integration secrets** (Google OAuth refresh tokens, the Actual Budget server password **and** the budget's end-to-end-encryption password, Home Assistant token, and any Whole Foods credential) require **encryption-at-rest, not hashing** — they must be replayed to external services.
 * **Infrastructure secrets** (DB encryption key, self-set API keys) are injected via **environment / platform secrets**, never stored in the DB.
 * **Acquired secrets** (OAuth refresh tokens, scraped sessions) live in SQLite in an **encrypted column**, with the encryption key supplied from the environment at boot, so a stolen volume snapshot alone does not yield usable tokens.
 * **OAuth expiry is a first-class, surfaced state** — an expired Google token must raise an alert (see §5.2), not silently kill a data feed.
@@ -154,7 +156,7 @@ graph TD
 ## 5. Reliability & Operations
 
 ### 5.1. Backups & Disaster Recovery
-* **Primary: Litestream.** Continuously stream SQLite's WAL to object storage (**Cloudflare R2**, free egress) for **point-in-time restore** to within seconds of a failure. Chosen over nightly dumps (which lose up to a day and break silently) and over trusting platform volume snapshots alone.
+* **Primary: Litestream.** Continuously stream SQLite's WAL to object storage (**Cloudflare R2**, free egress) for **point-in-time restore** to within seconds of a failure. Chosen over nightly dumps (which lose up to a day and break silently) and over trusting platform volume snapshots alone. *(Scope: this covers the **Hub's own** SQLite only. Actual keeps its own SQLite budget files under its `/data` volume — those are covered by the weekly Actual export below plus volume snapshots, not by Litestream.)*
 * **Secondary: weekly logical export.** A plain `.sql` dump plus an **Actual Budget export** to a *second* location, so a corrupt-replication or R2-account scenario doesn't take out both copies.
 * **Tested restore runbook (non-negotiable).** Maintain a written restore checklist and actually exercise it — an unrestored backup is a hope, not a backup.
 
