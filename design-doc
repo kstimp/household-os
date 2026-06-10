@@ -17,12 +17,21 @@ This document serves as the foundational specification for **Household OS**, a u
 ## 2. Core Modules
 
 ### 2.1. Meal Planner & Grocery Sync
-* **Recipe Caching:** Imports and parses family preferences and recipes (primarily optimized for America's Test Kitchen).
-* **Scheduler:** A calendar interface to assign meals to specific days.
-* **Grocery Generator:** Compiles an aggregated list of ingredients based on the selected meals, cross-referencing a local pantry inventory list.
+The design deliberately keeps ingredients as **free text** and uses an **LLM with a human in the loop** as the aggregation engine, rather than encoding a canonical ingredient catalog, unit-conversion tables, or densities. *Design note: do not "upgrade" this into a controlled-vocabulary ingredient engine — the human-in-the-loop review is the intended smoothing mechanism for fuzzy matching and unit math.*
+
+* **Recipe Store:** Lightweight recipe records — title, **free-text ingredient lines** (no parsing into structured quantities), servings, tags/allergens, rating, and source. America's Test Kitchen is treated as a **manual-entry source** (paywalled and bot-hostile); ingestion is manual entry or paste-and-parse, with schema.org/Recipe JSON-LD URL import as a possible nice-to-have.
+* **Scheduler:** A calendar interface to assign recipes to days. Planning also runs *backwards* from on-hand items (see Use-It-Up inventory in §2.5).
+* **LLM Aggregation Worker (human-in-the-loop):** A backend worker calls the **Claude API** with the week's planned recipes (plus any use-it-up items) and returns a draft, aggregated shopping list. The human reviews/corrects it before it becomes the shopping list.
+
+### 2.5. Kitchen Inventory & Shopping Board
+Three small, single-purpose lists — note the first two are *opposite* in intent:
+
+* **Staples (passive — buy-suppression):** A curated set tracked as binary `have / running-low` (Tier 1, no quantities). Pre-checks the items you usually have so the weekly list doesn't re-ask every week. Purpose: push items *off* the list.
+* **Use-It-Up inventory (active — planning input):** Notable on-hand perishables/freezer items you want to cook down (e.g., flank steak, chicken thighs), with optional location and date-acquired. **Feeds the planner as an input** — Claude builds the week around using these first. An item leaves the list when assigned to a meal. Purpose: pull the *plan* toward itself. *(Optional later: "been in the freezer a while" nudges via the ambient feed.)*
+* **Unified Shopping Board (kanban):** One standing board with columns **Need → This week → Bought**. Both ad-hoc run-outs ("out of dish soap" — ideal e-ink quick-capture) and the weekly Claude-generated items flow onto it, tagged by source. The **This week** column is what Saturday's shop / the Whole Foods order draws from; checking items off is the same grocery check-off described in §6.2.
 
 ### 2.2. Whole Foods Actuation Layer
-* **Cart Automation:** A background task (utilizing headless browser automation via Playwright/Puppeteer) that logs into Whole Foods, translates the grocery list into real items, matches them against user preferences, and populates the delivery cart for manual final checkout.
+* **Cart Automation:** A background task (headless browser automation via Playwright) that logs into Whole Foods, translates the **This week** column of the shopping board (§2.5) into real products, matches them against user preferences, and populates the delivery cart for **manual final checkout** — the human verifies the order before purchase. (Reliability/auth specifics are an open spike; see §8.)
 
 ### 2.3. Personal Finance (Actual Budget Integration)
 * **Local Ledger:** Replaces YNAB with a self-hosted instance of **Actual Budget** running in Docker.
@@ -43,6 +52,7 @@ graph TD
         A[Google Workspace]
         B[Actual Budget API]
         D[Whole Foods / Web]
+        K[Claude API<br>recipe list aggregation]
     end
 
     %% Edge / Auth
@@ -81,6 +91,7 @@ graph TD
     A <--> E
     B <--> E
     D <--> G
+    K <--> E
     E <--> T
 
     H --> X
@@ -185,5 +196,6 @@ To balance the physical constraints of an e-ink panel (slow refresh rates, limit
 
 * [ ] **Whole Foods automation spike (high priority).** Investigate live WF login behavior: 2FA/CAPTCHA frequency, anti-bot detection, and whether datacenter (cloud) IPs are flagged harder than residential. Outcome decides: (a) credential storage — encrypted password vs. short-TTL scraped session, and (b) where the WF worker runs — cloud container vs. home-side agent. *(Leaning toward home-side agent + session-cookie, pending findings.)*
 * [ ] **Ops alert channel** — choose between ntfy, Pushover, and email for §5.3 ops alerts. *(Deferred to implementation.)*
-* [ ] **Food data model** — recipe → ingredient → pantry → grocery-item mapping, unit normalization, and a realistic pantry-upkeep mechanism. *(Identified as the hard domain core; not yet specified — likely next design discussion.)*
-* [ ] **Integration sync semantics** — one-way vs. two-way sync with Google Calendar/Tasks/Keep, and conflict resolution.
+* [ ] **Recipe ingestion polish** — decide whether to build schema.org/Recipe JSON-LD URL import beyond manual/paste entry. *(Nice-to-have.)*
+* [ ] **Use-it-up nudges** — optional "been in the freezer a while" reminders via the ambient feed. *(Later.)*
+* [ ] **Integration sync semantics** — one-way vs. two-way sync with Google Calendar/Tasks/Keep, and conflict resolution. *(Not yet specified.)*
