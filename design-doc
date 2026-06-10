@@ -34,8 +34,11 @@ Three small, single-purpose lists — note the first two are *opposite* in inten
 * **Cart Automation:** A background task (headless browser automation via Playwright) that logs into Whole Foods, translates the **This week** column of the shopping board (§2.5) into real products, matches them against user preferences, and populates the delivery cart for **manual final checkout** — the human verifies the order before purchase. (Reliability/auth specifics are an open spike; see §8.)
 
 ### 2.3. Personal Finance (Actual Budget Integration)
-* **Local Ledger:** Replaces YNAB with a self-hosted instance of **Actual Budget** running in Docker.
-* **Sync Engine:** Pulls budget category balances and monthly targets via Actual Budget’s REST API into the main household dashboard for high-level visibility.
+The strategy is **wrap and delegate**: Actual owns the budgeting UX and remains the source of truth and the place you edit; Household OS wraps it so it feels like one product and mirrors summaries to the top level. Consistent with §2.6 — read-only mirror, edits delegated to Actual, never written back.
+
+* **Local Ledger:** A self-hosted instance of **Actual Budget** in Docker, hosted at a dedicated subdomain (e.g., `budget.<household-domain>`) behind the same reverse proxy and session/SSO as the rest of Household OS, with shared nav chrome so navigating into it feels in-product rather than like a separate app. Bank linking (SimpleFIN/GoCardless) is configured **natively inside Actual** — not reimplemented here.
+* **Summary Widgets:** The top-level dashboard surfaces category balances and monthly targets (read-only via Actual's REST API), each **deep-linking into the wrapped Actual app** for detail and editing.
+* **Overspend Alerts:** A worker polls category balances against their monthly targets and posts overspend / near-limit alerts into the ambient Family Feed (§2.4). Read-only — it observes Actual, never writes to it.
 
 ### 2.4. Unified Calendar, Tasks, & Home Status
 * **Aggregator:** Flattens data from each external surface into a unified "Family Feed," following the **mirror-or-own** rule in §2.6 — Calendar is mirrored read-only, Tasks/chores and the shopping board are owned.
@@ -53,6 +56,7 @@ Three small, single-purpose lists — note the first two are *opposite* in inten
 | **Grocery / shopping** | Owned | The §2.5 kanban board. Keep retired *for groceries*. |
 | **Tasks / chores** | Owned | Household OS is source of truth for shared household to-dos; the e-ink panel checks them off (§6.2). Google Tasks retired for household use; family adds chores via the app/panel. |
 | **Keep (general notes)** | Out of scope | Not integrated in v1. Keep stays as-is for ad-hoc family notes. |
+| **Finance** | Mirror (read-only) | Actual is source of truth and the edit surface, *wrapped* at a subdomain (§2.3). Dashboard mirrors summaries + overspend alerts; edits are a hand-off into Actual, not a sync. |
 
 This keeps each integration a one-directional data flow — a read for mirrors, a write-through for owned surfaces — with no reconciliation logic.
 
