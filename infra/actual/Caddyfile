@@ -1,0 +1,12 @@
+# Replace budget.example.com with your real host (matches Terraform's budget_host).
+#
+# We serve the Cloudflare Origin certificate and reverse-proxy to Actual.
+# We deliberately DO NOT set Cross-Origin-Opener-Policy / Cross-Origin-Embedder-Policy
+# here — Actual sets those itself, and adding them again would DUPLICATE the headers,
+# which browsers reject with a fatal `SharedArrayBufferMissing` error. Let Actual own them.
+
+budget.example.com {
+	tls /certs/origin.pem /certs/origin.key
+
+	reverse_proxy actual-server:5006
+}

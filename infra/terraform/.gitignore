@@ -1,0 +1,12 @@
+# Terraform state can contain secrets — never commit it.
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Your filled-in variables (tokens, keys).
+terraform.tfvars
+*.auto.tfvars
+
+# Rendered cert material pulled from outputs.
+certs/
