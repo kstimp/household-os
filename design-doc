@@ -38,8 +38,23 @@ Three small, single-purpose lists — note the first two are *opposite* in inten
 * **Sync Engine:** Pulls budget category balances and monthly targets via Actual Budget’s REST API into the main household dashboard for high-level visibility.
 
 ### 2.4. Unified Calendar, Tasks, & Home Status
-* **Aggregator:** Synchronizes and flattens data from Google Calendar, Google Tasks, Google Keep, and email notifications into a unified "Family Feed."
+* **Aggregator:** Flattens data from each external surface into a unified "Family Feed," following the **mirror-or-own** rule in §2.6 — Calendar is mirrored read-only, Tasks/chores and the shopping board are owned.
 * **Home Assistant Bridge:** Pulls critical ambient notifications from Home Assistant (e.g., utility tracking, pet feeding status, security/door states).
+
+### 2.6. Integration & Sync Model
+**Hard rule: no two-way sync, ever.** Bidirectional sync is where all conflict-resolution complexity lives. Every external surface sits in exactly one of two buckets:
+
+* **Mirror (read-only):** The Google product remains source of truth; Household OS only displays. No write-back.
+* **Owned:** Household OS is source of truth; the corresponding Google product is *retired for that job*. The panel/app can edit and check off.
+
+| Surface | Bucket | Notes |
+|---|---|---|
+| **Calendar** | Mirror (read-only) | Google Calendar stays source of truth; family keeps adding events on their phones; panel displays only. |
+| **Grocery / shopping** | Owned | The §2.5 kanban board. Keep retired *for groceries*. |
+| **Tasks / chores** | Owned | Household OS is source of truth for shared household to-dos; the e-ink panel checks them off (§6.2). Google Tasks retired for household use; family adds chores via the app/panel. |
+| **Keep (general notes)** | Out of scope | Not integrated in v1. Keep stays as-is for ad-hoc family notes. |
+
+This keeps each integration a one-directional data flow — a read for mirrors, a write-through for owned surfaces — with no reconciliation logic.
 
 ---
 
@@ -198,4 +213,4 @@ To balance the physical constraints of an e-ink panel (slow refresh rates, limit
 * [ ] **Ops alert channel** — choose between ntfy, Pushover, and email for §5.3 ops alerts. *(Deferred to implementation.)*
 * [ ] **Recipe ingestion polish** — decide whether to build schema.org/Recipe JSON-LD URL import beyond manual/paste entry. *(Nice-to-have.)*
 * [ ] **Use-it-up nudges** — optional "been in the freezer a while" reminders via the ambient feed. *(Later.)*
-* [ ] **Integration sync semantics** — one-way vs. two-way sync with Google Calendar/Tasks/Keep, and conflict resolution. *(Not yet specified.)*
+* [ ] **Owned-surface input ergonomics** — since Tasks/chores are owned (not Google Tasks), confirm the family's add-a-chore path (panel + mobile web) is low-friction enough to replace the Google habit. *(Validate during build.)*
