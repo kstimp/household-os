@@ -1,35 +1,64 @@
 # Household OS: System Design Document
 
-This document serves as the foundational specification for **Household OS**, a unified, local-first web application designed to consolidate household operations (meal planning, grocery automation, personal finance, and ambient notifications) into a single space, reducing reliance on fragmented SaaS applications.
+This document serves as the foundational specification for **Household OS**, a unified, cloud-hosted, family-private web application designed to consolidate household operations (meal planning, grocery automation, personal finance, and ambient notifications) into a single space, reducing reliance on fragmented SaaS applications.
 
 ---
 
 ## 1. Vision & Key Principles
 
 * **Ambient & Actionable:** The system serves two primary frontends: a fully featured web app for heavy lifting (mobile/desktop) and an e-ink kitchen display for ambient reference and quick, tactile interactions.
-* **Minimal Cost:** Zero or near-zero recurring monthly subscription fees. Leverages open-source tools and existing local hardware.
-* **Privacy & Local-First:** Sensitive data (finances, schedules, habits) is stored and processed locally within the home network whenever possible.
+* **Low Cost (not zero):** Minimize recurring fees, but accept a small monthly hosting cost in exchange for friction-free family access. Favor open-source tools and free service tiers where they fit.
+* **Family-Private, Cloud-Hosted:** The system is hosted in the cloud and gated so that **only allowlisted family Google accounts** can reach it. Data privacy is enforced by authentication and a trusted provider rather than by keeping everything on the home LAN. *(This supersedes an earlier "local-first" principle, which was dropped because it required every family member to run a VPN client — a non-starter for household adoption. See §4.)*
 * **Low Dependency & High Consolidation:** A single custom backend acts as an aggressive caching and aggregation layer, shielding the frontends from talking to multiple brittle external APIs.
+* **Cloud-primary, with a thin home bridge:** A few capabilities are inherently local (Home Assistant on the LAN, the e-ink panel in the kitchen, and possibly the Whole Foods automation for residential-IP reasons). These are reached through a single lightweight home-side agent so that **family members install nothing** — only one home machine runs the bridge.
 
 ---
 
 ## 2. Core Modules
 
 ### 2.1. Meal Planner & Grocery Sync
-* **Recipe Caching:** Imports and parses family preferences and recipes (primarily optimized for America's Test Kitchen).
-* **Scheduler:** A calendar interface to assign meals to specific days.
-* **Grocery Generator:** Compiles an aggregated list of ingredients based on the selected meals, cross-referencing a local pantry inventory list.
+The design deliberately keeps ingredients as **free text** and uses an **LLM with a human in the loop** as the aggregation engine, rather than encoding a canonical ingredient catalog, unit-conversion tables, or densities. *Design note: do not "upgrade" this into a controlled-vocabulary ingredient engine — the human-in-the-loop review is the intended smoothing mechanism for fuzzy matching and unit math.*
 
-### 2.2. Whole Foods Actuation Layer
-* **Cart Automation:** A background task (utilizing headless browser automation via Playwright/Puppeteer) that logs into Whole Foods, translates the grocery list into real items, matches them against user preferences, and populates the delivery cart for manual final checkout.
+* **Recipe Store:** Lightweight recipe records — title, **free-text ingredient lines** (no parsing into structured quantities), servings, tags/allergens, rating, and source. America's Test Kitchen is treated as a **manual-entry source** (paywalled and bot-hostile); ingestion is manual entry or paste-and-parse, with schema.org/Recipe JSON-LD URL import as a possible nice-to-have.
+* **Scheduler:** A calendar interface to assign recipes to days. Planning also runs *backwards* from on-hand items (see Use-It-Up inventory in §2.2).
+* **LLM Aggregation Worker (human-in-the-loop):** A backend worker calls the **Claude API** with the week's planned recipes (plus any use-it-up items) and returns a draft, aggregated shopping list. The human reviews/corrects it before it becomes the shopping list.
 
-### 2.3. Personal Finance (Actual Budget Integration)
-* **Local Ledger:** Replaces YNAB with a self-hosted instance of **Actual Budget** running in Docker.
-* **Sync Engine:** Pulls budget category balances and monthly targets via Actual Budget’s REST API into the main household dashboard for high-level visibility.
+### 2.2. Kitchen Inventory & Shopping Board
+Three small, single-purpose lists — note the first two are *opposite* in intent:
 
-### 2.4. Unified Calendar, Tasks, & Home Status
-* **Aggregator:** Synchronizes and flattens data from Google Calendar, Google Tasks, Google Keep, and email notifications into a unified "Family Feed."
+* **Staples (passive — buy-suppression):** A curated set tracked as binary `have / running-low` (Tier 1, no quantities). Pre-checks the items you usually have so the weekly list doesn't re-ask every week. Purpose: push items *off* the list.
+* **Use-It-Up inventory (active — planning input):** Notable on-hand perishables/freezer items you want to cook down (e.g., flank steak, chicken thighs), with optional location and date-acquired. **Feeds the planner as an input** — Claude builds the week around using these first. An item leaves the list when assigned to a meal. Purpose: pull the *plan* toward itself. *(Optional later: "been in the freezer a while" nudges via the ambient feed.)*
+* **Unified Shopping Board (kanban):** One standing board with columns **Need → This week → Bought**. Both ad-hoc run-outs ("out of dish soap" — ideal e-ink quick-capture) and the weekly Claude-generated items flow onto it, tagged by source. The **This week** column is what Saturday's shop / the Whole Foods order draws from; checking items off is the same grocery check-off described in §6.2.
+
+### 2.3. Whole Foods Actuation Layer
+* **Cart Automation:** A background task (headless browser automation via Playwright) that logs into Whole Foods, translates the **This week** column of the shopping board (§2.2) into real products, matches them against user preferences, and populates the delivery cart for **manual final checkout** — the human verifies the order before purchase. (Reliability/auth specifics are an open spike; see §8.)
+
+### 2.4. Personal Finance (Actual Budget Integration)
+The strategy is **wrap and delegate**: Actual owns the budgeting UX and remains the source of truth and the place you edit; Household OS wraps it so it feels like one product and mirrors summaries to the top level. Consistent with §2.6 — read-only mirror, edits delegated to Actual, never written back.
+
+* **Local Ledger:** A self-hosted instance of **Actual Budget** in Docker, hosted at a dedicated subdomain (e.g., `budget.<household-domain>`) behind the same reverse proxy and session/SSO as the rest of Household OS, with shared nav chrome so navigating into it feels in-product rather than like a separate app. Bank linking (SimpleFIN/GoCardless) is configured **natively inside Actual** — not reimplemented here.
+* **Summary Widgets:** The top-level dashboard surfaces category balances and monthly targets (read-only via Actual's REST API), each **deep-linking into the wrapped Actual app** for detail and editing.
+* **Overspend Alerts:** A worker polls category balances against their monthly targets and posts overspend / near-limit alerts into the ambient Family Feed (§2.5). Read-only — it observes Actual, never writes to it.
+
+### 2.5. Unified Calendar, Tasks, & Home Status
+* **Aggregator:** Flattens data from each external surface into a unified "Family Feed," following the **mirror-or-own** rule in §2.6 — Calendar is mirrored read-only, Tasks/chores and the shopping board are owned.
 * **Home Assistant Bridge:** Pulls critical ambient notifications from Home Assistant (e.g., utility tracking, pet feeding status, security/door states).
+
+### 2.6. Integration & Sync Model
+**Hard rule: no two-way sync, ever.** Bidirectional sync is where all conflict-resolution complexity lives. Every external surface sits in exactly one of two buckets:
+
+* **Mirror (read-only):** The external product remains source of truth (Google for calendar, Actual for finance); Household OS only displays. No write-back.
+* **Owned:** Household OS is source of truth; the corresponding Google product is *retired for that job*. The panel/app can edit and check off.
+
+| Surface | Bucket | Notes |
+|---|---|---|
+| **Calendar** | Mirror (read-only) | Google Calendar stays source of truth; family keeps adding events on their phones; panel displays only. |
+| **Grocery / shopping** | Owned | The §2.2 kanban board. Keep retired *for groceries*. |
+| **Tasks / chores** | Owned | Household OS is source of truth for shared household to-dos; the e-ink panel checks them off (§6.2). Google Tasks retired for household use; family adds chores via the app/panel. |
+| **Keep (general notes)** | Out of scope | Not integrated in v1. Keep stays as-is for ad-hoc family notes. |
+| **Finance** | Mirror (read-only) | Actual is source of truth and the edit surface, *wrapped* at a subdomain (§2.4). Dashboard mirrors summaries + overspend alerts; edits are a hand-off into Actual, not a sync. |
+
+This keeps each integration a one-directional data flow — a read for mirrors, a write-through for owned surfaces — with no reconciliation logic.
 
 ---
 
@@ -41,52 +70,115 @@ graph TD
     subgraph Spokes [EXTERNAL SPOKES]
         A[Google Workspace]
         B[Actual Budget API]
-        C[Home Assistant]
         D[Whole Foods / Web]
+        K[Claude API<br>recipe list aggregation]
     end
 
-    %% The Hub Backend Layer
-    subgraph Hub [THE HUB - Core Engine]
+    %% Edge / Auth
+    subgraph Edge [CLOUDFLARE EDGE]
+        X[Cloudflare Access<br>Google SSO + family allowlist]
+    end
+
+    %% The Hub Backend Layer (cloud container)
+    subgraph Hub [THE HUB - Cloud Container]
         E[Cron / Workers<br>Fetch & aggregate data]
-        F[(SQLite Cache<br>Local-first ledger & states)]
-        G[Playwright / Puppeteer<br>Cart automation & rendering]
+        F[(SQLite on volume<br>App state & cached data)]
+        G[Playwright<br>Cart automation & e-ink rendering]
         H[Unified REST / WS API]
-        
+
         E --> F
         G --> F
         F --> H
     end
 
+    %% Home-side bridge
+    subgraph Home [HOME-SIDE AGENT]
+        T[Cloudflare Tunnel daemon]
+        C[Home Assistant<br>LAN-only]
+        W[WF worker?<br>residential IP - TBD spike]
+        T --- C
+        T --- W
+    end
+
     %% Frontend Layer
     subgraph Frontends [FRONTEND DISPLAY LAYER]
         I[RICH WEB VIEW SPA<br>Mobile & Desktop targets<br>Full CRUD & Admin UI<br>Tailwind + JS]
-        J[E-INK DISPLAY LAYER<br>Low-power interactive UI<br>Static image generation<br>Lightweight touch handling]
+        J[E-INK DISPLAY LAYER<br>Cloud API over internet<br>Static image + touch zones<br>Narrow device token]
     end
 
     %% Connections
     A <--> E
     B <--> E
-    C <--> E
     D <--> G
-    
-    H <--> I
+    K <--> E
+    E <--> T
+
+    H --> X
+    X <--> I
     H <--> J
 ```
 
 ### 3.1. Infrastructure & Backend
-* **Host Environment:** Docker containers running on a local home server or Raspberry Pi.
-* **Database:** **SQLite**. Stores custom application state, meal plan configurations, cached calendar entries, and internal tracking metadata.
+* **Host Environment:** A single **always-on cloud container** (e.g., Fly.io, Railway, or a small VPS) running the backend, the Playwright runtime, and cron workers. *Serverless platforms (Vercel, Cloudflare Workers) were rejected:* they don't accommodate a long-running headless browser, persistent local SQLite, or always-on cron without significant rework.
+* **Database:** **SQLite on a persistent volume** attached to the container. Stores custom application state, meal plan configurations, cached calendar entries, and internal tracking metadata.
 * **Application Server:** Node.js (Express/Fastify) or Python (FastAPI). Handles scheduling, integration scripts, and exposes a unified API.
+* **Edge / Auth:** **Cloudflare Access** fronts the web app, providing Google SSO + a family email allowlist at the edge (no custom auth code). See §4.
+* **Home-Side Agent:** A lightweight daemon on a home machine runs a **Cloudflare Tunnel**, exposing Home Assistant (LAN-only) to the cloud backend. The Whole Foods automation worker *may* also live here to use a residential IP (pending the spike in §8). Family members install nothing.
 
 ---
 
-## 4. Frontend Strategies
+## 4. Security & Access
 
-### 4.1. Rich Web Frontend (Mobile & Desktop)
+### 4.1. Authentication
+* **Mechanism:** **Cloudflare Access** in front of the web app, configured with **Google as the identity provider**. No custom auth/session code in the application for human users.
+* **Authorization scope:** An explicit **family email allowlist** (individual `@gmail.com` addresses — there is no Google Workspace domain to key off of). Only listed accounts can reach the app at all.
+* **Rejected alternatives:** Tailscale/WireGuard overlay (every family member would need a VPN client — adoption non-starter); passkeys/local auth (redundant once SSO gates the edge); "Login with Google" wired into the app (couples app auth to a dependency and is unnecessary given Access handles it at the edge).
+
+### 4.2. Roles & Data Visibility
+* **v1: no role system.** All authenticated (allowlisted) members see all modules, **including finance**. This is a deliberate simplification for a small, trusted household and avoids per-widget authorization.
+* Revisit only if a future need arises to hide a module from some members (e.g., kids, guests).
+
+### 4.3. E-Ink Panel Trust Model
+* The panel cannot perform interactive SSO and is physically public (sits on the kitchen counter). It is therefore **not** a full user.
+* It authenticates with a **long-lived, revocable device token** authorized for a **narrow capability whitelist only**: fetch the rendered dashboard image, post grocery/task check-offs, post meal ratings. No finance, no settings, no raw-data reads.
+* Token is rotatable (re-provision the panel) in case the device is lost or sold.
+
+### 4.4. Secrets Management
+* **Integration secrets** (Google OAuth refresh tokens, Actual Budget creds, Home Assistant token, and any Whole Foods credential) require **encryption-at-rest, not hashing** — they must be replayed to external services.
+* **Infrastructure secrets** (DB encryption key, self-set API keys) are injected via **environment / platform secrets**, never stored in the DB.
+* **Acquired secrets** (OAuth refresh tokens, scraped sessions) live in SQLite in an **encrypted column**, with the encryption key supplied from the environment at boot, so a stolen volume snapshot alone does not yield usable tokens.
+* **OAuth expiry is a first-class, surfaced state** — an expired Google token must raise an alert (see §5.2), not silently kill a data feed.
+
+---
+
+## 5. Reliability & Operations
+
+### 5.1. Backups & Disaster Recovery
+* **Primary: Litestream.** Continuously stream SQLite's WAL to object storage (**Cloudflare R2**, free egress) for **point-in-time restore** to within seconds of a failure. Chosen over nightly dumps (which lose up to a day and break silently) and over trusting platform volume snapshots alone.
+* **Secondary: weekly logical export.** A plain `.sql` dump plus an **Actual Budget export** to a *second* location, so a corrupt-replication or R2-account scenario doesn't take out both copies.
+* **Tested restore runbook (non-negotiable).** Maintain a written restore checklist and actually exercise it — an unrestored backup is a hope, not a backup.
+
+### 5.2. Observability & Silent-Failure Alerting
+The failure mode of brittle background workers is *silence*, so instrumentation is mandatory. Three layers for v1:
+* **Dead-man's switch** (e.g., healthchecks.io free tier): each cron worker pings on success; a *missing* ping alerts. Catches "the worker stopped running entirely," which uptime monitors miss.
+* **Per-worker heartbeat in SQLite:** a `last_success_at` + `last_error` row per integration, **surfaced on the dashboard** and as a status dot on the e-ink panel — staleness is visible *in the product*, not just in logs.
+* **Error tracking** (e.g., Sentry free tier) for exceptions with stack traces.
+* **OAuth-expired** is treated as a first-class alert, not a log line.
+
+### 5.3. Notification Delivery
+Two distinct audiences, deliberately separated:
+* **Ops alerts → admin only** ("Google token expired," "WF worker failed," "backup didn't run"). Wired to the dead-man's switch + Sentry. **Channel: TBD** (ntfy vs. Pushover vs. email — see §8).
+* **Household notifications → family** (the ambient/actionable feed: HA events, calendar reminders, delivery status). Served by the e-ink panel + an email digest for v1; real-time per-person family push is deferred until there's demand.
+
+---
+
+## 6. Frontend Strategies
+
+### 6.1. Rich Web Frontend (Mobile & Desktop)
 * **Tech Selection:** Responsive Single Page Application (SPA) styled with Tailwind CSS.
 * **Purpose:** The primary administrative control panel. Used on phones and laptops for intensive input tasks: modifying budget categories, mapping new recipes, managing deep settings, and initiating the Whole Foods checkout sequence.
 
-### 4.2. Interactive E-Ink Kitchen Display
+### 6.2. Interactive E-Ink Kitchen Display
 To balance the physical constraints of an e-ink panel (slow refresh rates, limited processing power) with the requirement for simple interactions, the display leverages a **Hybrid Rendering Strategy**:
 
 * **Complex Visuals (Pre-rendered):** The backend server runs a headless browser instance, loads the daily/weekly dashboard view, takes a highly stylized high-contrast PNG/BMP screenshot, and serves it.
@@ -98,20 +190,31 @@ To balance the physical constraints of an e-ink panel (slow refresh rates, limit
 
 ---
 
-## 5. Implementation Roadmap
+## 7. Implementation Roadmap
 
 * [ ] **Phase 1: Environment & Finance Setup**
-  * Deploy self-hosted Actual Budget via Docker.
-  * Initialize the core backend project with SQLite.
-  * Build a worker to pull and cache budget balances.
+  * Stand up the cloud container host + SQLite-on-volume; put **Cloudflare Access (Google SSO + family allowlist)** in front.
+  * Stand up the home-side **Cloudflare Tunnel** agent (initially just for Home Assistant reachability).
+  * Deploy Actual Budget and build a worker to pull and cache budget balances.
 * [ ] **Phase 2: Meal & Cart Core**
   * Port over the existing vibe-coded meal planner scripts into the Hub backend.
   * Expose an endpoint that outputs the unified grocery list.
   * Solidify the Playwright automation script to pipe lists to the Whole Foods cart.
 * [ ] **Phase 3: The Rich Web UI**
   * Build the mobile/desktop responsive views for scheduling meals and editing tasks.
-  * Integrate the unified Google Calendar/Tasks/Keep API endpoints.
+  * Wire up the unified feed per §2.6: Google Calendar mirrored read-only; Tasks/chores as a Household-OS-owned surface (not Google Tasks); Keep out of scope.
 * [ ] **Phase 4: E-Ink Frontend Implementation**
   * Design an e-ink-optimized CSS media query/route layout.
   * Set up the server-side screenshot generation worker.
   * Configure hardware touch boundaries to map to the rating and check-off API endpoints.
+  * Provision the panel's narrow device token (see §4.3).
+
+---
+
+## 8. Open Questions & Spikes
+
+* [ ] **Whole Foods automation spike (high priority).** Investigate live WF login behavior: 2FA/CAPTCHA frequency, anti-bot detection, and whether datacenter (cloud) IPs are flagged harder than residential. Outcome decides: (a) credential storage — encrypted password vs. short-TTL scraped session, and (b) where the WF worker runs — cloud container vs. home-side agent. *(Leaning toward home-side agent + session-cookie, pending findings.)*
+* [ ] **Ops alert channel** — choose between ntfy, Pushover, and email for §5.3 ops alerts. *(Deferred to implementation.)*
+* [ ] **Recipe ingestion polish** — decide whether to build schema.org/Recipe JSON-LD URL import beyond manual/paste entry. *(Nice-to-have.)*
+* [ ] **Use-it-up nudges** — optional "been in the freezer a while" reminders via the ambient feed. *(Later.)*
+* [ ] **Owned-surface input ergonomics** — since Tasks/chores are owned (not Google Tasks), confirm the family's add-a-chore path (panel + mobile web) is low-friction enough to replace the Google habit. *(Validate during build.)*
