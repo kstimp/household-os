@@ -1,0 +1,40 @@
+# Actual Budget + Caddy (TLS termination for Cloudflare "Full (strict)").
+#
+# Runs on the Hetzner VPS. Actual is NOT published to the host — only Caddy is.
+# Caddy reverse-proxies to Actual over the internal compose network, which is
+# also the path the finance worker will use later (see install-actual.md §8).
+#
+# Data lives on the Hetzner volume mounted at /mnt/data (see install doc §4).
+
+services:
+  actual-server:
+    image: actualbudget/actual-server:latest
+    restart: unless-stopped
+    # Note: deliberately no `ports:` — not reachable from outside the network.
+    expose:
+      - "5006"
+    volumes:
+      - /mnt/data/actual:/data
+    healthcheck:
+      test: ["CMD-SHELL", "node src/scripts/health-check.js"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - actual-server
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/certs:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

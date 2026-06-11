@@ -1,0 +1,22 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+
+hcloud_token         = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+cloudflare_api_token = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+cloudflare_account_id = "0123456789abcdef0123456789abcdef"
+cloudflare_zone_id    = "0123456789abcdef0123456789abcdef"
+
+domain           = "example.com"
+budget_subdomain = "budget"
+
+family_emails = [
+  "you@gmail.com",
+  "partner@gmail.com",
+]
+
+admin_ssh_public_key = "ssh-ed25519 AAAA... you@laptop"
+admin_ip_cidr        = "203.0.113.4/32"
+
+# Optional overrides:
+# server_type    = "cx22"
+# location       = "fsn1"
+# volume_size_gb = 20
