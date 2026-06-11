@@ -1,215 +1,572 @@
 # Installing Actual Budget for Household OS
 
-This is the **Phase 1 (finance)** setup from the roadmap (`design-doc` §7): stand up
-the cloud box, put Cloudflare Access in front, and get a self-hosted **Actual Budget**
-running at `budget.<your-domain>` — ready for the finance worker to read from later.
+This walks you through deploying a self-hosted **Actual Budget** instance to a cloud server,
+locked behind Cloudflare Access (Google login), with TLS and automated backups — starting
+from zero accounts and zero tooling.
 
-It follows the architecture decided in `design-doc` §2.4 / §3:
+**What you'll end up with:** Actual Budget running at `https://budget.yourdomain.com`,
+accessible only to the Google accounts you allowlist, ready for the finance worker to read
+from later.
 
-- **Compute:** one always-on **Hetzner Cloud VPS** running Docker (Actual now; the Hub,
-  Playwright, and cron later). Cloudflare *can't* be the compute layer — Workers were
-  rejected in §3.1 because they can't run a long-lived headless browser or persistent SQLite.
-- **Edge:** **Cloudflare** in front — proxied DNS, **Access** (Google SSO + family
-  allowlist), an **Origin certificate** for TLS, and an **R2** bucket for backups.
-- **TLS on the box:** **Caddy** terminates TLS using the Cloudflare Origin cert and
-  reverse-proxies to Actual. Cloudflare SSL mode is **Full (strict)**.
+**Estimated time:** 60–90 minutes for a first-timer.
 
-> The Cloudflare **Tunnel** mentioned elsewhere in the design is a *separate* thing for the
-> home-side Home Assistant bridge — not used for this cloud box. Here the box has a public
-> IP and Cloudflare proxies in front of it.
+**Monthly cost:** ~$5–7 (Hetzner `cx22` VPS + volume). Cloudflare's free plan covers
+everything on the Cloudflare side. R2 storage for backups is free up to 10 GB.
 
-Everything in `infra/` is Terraform + Docker config you can apply directly.
+**Architecture at a glance:**
+```
+Browser → Cloudflare Access (Google login) → Cloudflare proxy → Caddy (TLS) → Actual Budget
+                                                                      ↑
+                                                        Hetzner VPS + persistent volume
+```
+
+---
+
+## Part 0 — What's in this repo
 
 ```
 infra/
-  terraform/         # Hetzner VPS + volume + firewall + Cloudflare DNS/Access/Origin-cert/R2
-  actual/            # docker-compose.yml + Caddyfile for the Actual container
+  terraform/         # provisions: Hetzner VPS, volume, firewall, Cloudflare DNS/Access/Origin-cert/R2
+  actual/            # docker-compose.yml + Caddyfile for Actual + Caddy containers
+docs/
+  install-actual.md  # this file
 ```
 
----
-
-## What Actual actually is (read this first)
-
-Two facts about Actual change how we install and integrate it:
-
-1. **There is no REST API.** Actual's server is a *dumb sync store* — it can't compute a
-   budget. All budget logic lives in the **`@actual-app/api` Node.js library**, which
-   downloads a full local copy of the budget and answers queries like
-   `getBudgetMonth('2026-06')` from that copy. So the finance worker (later) doesn't "hit an
-   endpoint" — it runs the Node library against a local synced copy. This is why the Hub is
-   Node (design-doc §3.1).
-2. **It needs a secure context + COOP/COEP headers** to enable SharedArrayBuffer (its WASM
-   SQLite). That means HTTPS end-to-end and **not duplicating** those headers at the proxy.
-   The provided `Caddyfile` lets Actual set them and does not re-add them — the #1 self-host
-   failure (`SharedArrayBufferMissing`) comes from duplicating them.
+Terraform creates all the cloud resources. You then SSH into the VPS, copy the Docker stack,
+and start it up. Actual Budget runs in Docker. Caddy (also in Docker) handles TLS.
 
 ---
 
-## Prerequisites
+## Part 1 — Create your accounts
 
-- A domain on Cloudflare (zone active, nameservers pointed at Cloudflare).
-- Accounts: **Hetzner Cloud**, **Cloudflare** (with R2 enabled once).
-- Local tools: `terraform >= 1.6`, `ssh`, and an SSH keypair.
-- API tokens:
-  - **Hetzner:** Project → Security → API Tokens → *Read & Write*.
-  - **Cloudflare:** My Profile → API Tokens → Create, with permissions:
-    `Zone:DNS:Edit`, `Zone:SSL and Certificates:Edit`,
-    `Account:Access: Apps and Policies:Edit`, `Account:Cloudflare R2:Edit`.
-- The IDs Terraform needs: Cloudflare **Account ID** and **Zone ID** (both on the zone's
-  Overview page / account home).
-- A one-time Cloudflare setup the Terraform assumes is in place:
-  - **Zero Trust → Settings → Authentication → add Google** as a login method (so Access
-    can do Google SSO). (Cloudflare Access app + policy are created by Terraform; the IdP
-    itself is a console step.)
-  - **SSL/TLS → Overview → set encryption mode to _Full (strict)_** for the zone.
+### 1a. Cloudflare
+
+1. Go to **cloudflare.com** → Sign up for a free account.
+2. From the dashboard, click **Add a site** and enter your domain name.
+3. Follow the prompts — Cloudflare will give you two nameserver addresses (e.g.
+   `ada.ns.cloudflare.com`). Log in to your domain registrar and **replace** the existing
+   nameservers with the two Cloudflare gives you. This can take up to 24 hours to propagate,
+   but usually finishes in under an hour.
+4. Wait until the Cloudflare dashboard shows your domain with a **green "Active"** status.
+
+**Enable R2 (Cloudflare's object storage for backups):**
+
+5. In the left sidebar, go to **R2 Object Storage**.
+6. Click **Get started** (you'll be asked to add a payment method — R2 has a free tier
+   (10 GB/month) but requires a card on file to activate).
+
+**Enable Zero Trust (for the Access login gate):**
+
+7. In the left sidebar, click **Zero Trust**.
+8. If prompted, choose a team name (e.g. `household`) and pick the **Free** plan.
+
+### 1b. Hetzner Cloud
+
+1. Go to **hetzner.com/cloud** → Sign up.
+2. After email verification, go to your **Hetzner Cloud Console** → **New Project**.
+3. Name it something like `household-os` and create it. You'll be inside this project for
+   all subsequent Hetzner steps.
 
 ---
 
-## Step 1 — Fill in Terraform variables
+## Part 2 — One-time Cloudflare console setup
+
+These two steps must be done in the Cloudflare UI — Terraform can't do them for you.
+
+### 2a. Add Google as a login method in Zero Trust
+
+This lets Cloudflare Access use Google accounts to authenticate users.
+
+1. In Cloudflare, go to **Zero Trust** (left sidebar).
+2. Click **Settings** → **Authentication**.
+3. Under **Login methods**, click **Add new** → select **Google**.
+4. Follow the instructions: you'll need to create a Google Cloud OAuth app.
+   - Go to **console.cloud.google.com** → create a project (or use an existing one).
+   - Go to **APIs & Services** → **OAuth consent screen**: set it to **Internal** (or
+     External if you're the only Google Workspace user), fill in app name and your email.
+   - Go to **APIs & Services** → **Credentials** → **Create Credentials** →
+     **OAuth client ID** → Application type: **Web application**.
+   - In **Authorized redirect URIs**, paste the redirect URI that Cloudflare shows you on
+     the Add Google screen (looks like `https://<team>.cloudflareaccess.com/cdn-cgi/access/callback`).
+   - Click **Create**. Copy the **Client ID** and **Client Secret**.
+   - Paste them back into Cloudflare's "Add Google" form → **Save**.
+5. Confirm Google now shows up under Login methods with a green checkmark.
+
+### 2b. Set SSL/TLS encryption mode to Full (strict)
+
+This makes Cloudflare verify the certificate on your server (the Origin certificate Terraform
+creates). Without this, TLS is effectively not end-to-end.
+
+1. In Cloudflare, click your domain in the top left to go to the zone dashboard.
+2. Go to **SSL/TLS** → **Overview**.
+3. Change the encryption mode to **Full (strict)**.
+
+---
+
+## Part 3 — Install local tools
+
+You need these on your laptop/desktop to run the deployment.
+
+### 3a. Terraform
+
+**Mac (Homebrew):**
+```bash
+brew tap hashicorp/tap
+brew install hashicorp/tap/terraform
+terraform version   # should print 1.6 or higher
+```
+
+**Linux:**
+```bash
+# Download from https://developer.hashicorp.com/terraform/install
+# Or via apt:
+wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+sudo apt update && sudo apt install terraform
+```
+
+**Windows:** Download the zip from the Terraform website and add it to your PATH, or use
+`winget install HashiCorp.Terraform`.
+
+### 3b. SSH keypair
+
+If you don't already have one:
+```bash
+ssh-keygen -t ed25519 -C "household-os"
+# Press Enter to accept the default path (~/.ssh/id_ed25519)
+# Set a passphrase (recommended) or leave blank
+```
+
+Your public key is at `~/.ssh/id_ed25519.pub`. You'll paste its contents into
+`terraform.tfvars` shortly.
+
+---
+
+## Part 4 — Get your API tokens and IDs
+
+### 4a. Cloudflare Account ID and Zone ID
+
+1. In Cloudflare, click your domain to open its dashboard.
+2. Scroll down in the right sidebar. You'll see:
+   - **Zone ID** — a 32-character hex string. Copy it.
+   - **Account ID** — another 32-character hex string just below it. Copy it.
+
+### 4b. Cloudflare API token
+
+1. Click your profile icon (top right) → **My Profile** → **API Tokens** tab.
+2. Click **Create Token** → **Create Custom Token**.
+3. Give it a name like `household-os-terraform`.
+4. Under **Permissions**, add all of the following (click **Add more** between each):
+   - `Zone` / `DNS` / `Edit`
+   - `Zone` / `SSL and Certificates` / `Edit`
+   - `Account` / `Access: Apps and Policies` / `Edit`
+   - `Account` / `Cloudflare R2:Edit`
+5. Under **Zone Resources**, set it to **Include → Specific zone → [your domain]**.
+6. Click **Continue to summary** → **Create Token**.
+7. **Copy the token now** — Cloudflare will only show it once.
+
+### 4c. Hetzner API token
+
+1. In the Hetzner Cloud Console, go to your project → **Security** (left sidebar) →
+   **API Tokens** tab.
+2. Click **Generate API Token**.
+3. Give it a name like `terraform`, set permissions to **Read & Write**.
+4. **Copy the token** — it's also shown only once.
+
+### 4d. Find your current public IP
+
+Terraform locks SSH access to your IP address (so the server isn't open to the world).
+```bash
+curl -s ifconfig.me
+# e.g. 203.0.113.42
+```
+You'll enter this as `203.0.113.42/32` in `terraform.tfvars`.
+
+---
+
+## Part 5 — Fill in Terraform variables
 
 ```bash
 cd infra/terraform
 cp terraform.tfvars.example terraform.tfvars
-# edit terraform.tfvars: tokens, account/zone IDs, domain, family_emails,
-# your SSH public key, and admin_ip_cidr (your current IP as a /32).
 ```
 
-`terraform.tfvars` and all state are gitignored — they hold secrets.
+Open `terraform.tfvars` in your editor. Fill in every field:
 
-## Step 2 — Apply the infrastructure
+```hcl
+# Tokens
+hcloud_token        = "..."   # Hetzner API token from Step 4c
+cloudflare_api_token = "..."  # Cloudflare API token from Step 4b
+
+# Cloudflare identifiers
+cloudflare_account_id = "..."  # Account ID from Step 4a
+cloudflare_zone_id    = "..."  # Zone ID from Step 4a
+
+# Your domain
+domain            = "yourdomain.com"      # the apex domain on Cloudflare
+budget_subdomain  = "budget"              # will create budget.yourdomain.com
+
+# Who can log in through Cloudflare Access
+family_emails = [
+  "you@gmail.com",
+  "partner@gmail.com",
+  # add as many as you like
+]
+
+# Your SSH public key (so you can SSH into the server)
+ssh_public_key = "ssh-ed25519 AAAA... household-os"  # contents of ~/.ssh/id_ed25519.pub
+
+# Your current IP — locks SSH to just your machine
+admin_ip_cidr = "203.0.113.42/32"   # replace with output from Step 4d
+
+# Server sizing — cx22 (2 vCPU, 4 GB RAM) is the minimum; fine for Actual alone
+server_type = "cx22"
+location    = "nbg1"   # Nuremberg; other options: fsn1, hel1, ash, sin
+```
+
+`terraform.tfvars` is gitignored and will never be committed — it holds all your secrets.
+
+---
+
+## Part 6 — Provision the infrastructure
 
 ```bash
+# Still in infra/terraform/
 terraform init
-terraform plan      # review: 1 VPS, 1 volume, firewall, DNS, Access app+policy, Origin cert, R2 bucket
-terraform apply
 ```
 
-Capture the outputs:
+This downloads the Hetzner, Cloudflare, and TLS providers (~30 seconds).
 
 ```bash
-terraform output server_ipv4
-terraform output budget_url
+terraform plan
+```
+
+Review the output. You should see it plans to create:
+- 1 Hetzner VPS (`cx22`)
+- 1 Hetzner volume (10 GB, formatted ext4)
+- 1 Hetzner firewall (allows HTTP/HTTPS from anywhere, SSH only from your IP)
+- 1 Cloudflare DNS A record (`budget.yourdomain.com` → server IP)
+- 1 Cloudflare Access application + policy (Google login, your family_emails list)
+- 1 Cloudflare Origin certificate (15-year TLS cert for Caddy to use)
+- 1 Cloudflare R2 bucket (for Actual backups)
+
+If the plan looks right:
+
+```bash
+terraform apply
+# Type "yes" when prompted
+```
+
+This takes about 2 minutes. The VPS cloud-init script (which installs Docker) runs in the
+background after the server boots — wait an extra 2–3 minutes before SSHing in.
+
+Capture the outputs you'll need:
+
+```bash
+terraform output server_ipv4            # note this IP
+terraform output budget_url             # note this URL
 terraform output -raw origin_cert_pem > /tmp/origin.pem
 terraform output -raw origin_key_pem  > /tmp/origin.key
 ```
 
-## Step 3 — Get the Actual stack onto the box
+---
+
+## Part 7 — Deploy the stack to the server
+
+Set a shell variable for convenience:
 
 ```bash
 IP=$(terraform output -raw server_ipv4)
+```
 
-# Copy the compose stack and the Origin cert material.
+Wait for cloud-init to finish (Docker is installed on first boot):
+
+```bash
+# SSH in and check — you may need to wait 2-3 minutes after terraform apply finishes
+ssh root@$IP "docker --version"
+# Should print: Docker version 27.x.x, build ...
+# If you get "command not found", wait another minute and retry
+```
+
+Copy the Docker Compose stack to the server:
+
+```bash
 scp -r ../actual root@$IP:/opt/household-os/actual
+```
+
+Create the certs directory and copy in the Origin certificate:
+
+```bash
 ssh root@$IP 'mkdir -p /opt/household-os/actual/certs'
 scp /tmp/origin.pem root@$IP:/opt/household-os/actual/certs/origin.pem
 scp /tmp/origin.key root@$IP:/opt/household-os/actual/certs/origin.key
 ssh root@$IP 'chmod 600 /opt/household-os/actual/certs/origin.key'
 ```
 
-Edit the host in the Caddyfile to match your domain:
+Update the Caddyfile with your actual domain (the file ships with a placeholder):
 
 ```bash
-ssh root@$IP "sed -i 's/budget.example.com/budget.YOURDOMAIN.com/' /opt/household-os/actual/Caddyfile"
+ssh root@$IP "sed -i 's/budget.example.com/budget.$(terraform output -raw domain)/' /opt/household-os/actual/Caddyfile"
 ```
 
-## Step 4 — Mount the data volume
-
-Hetzner attaches the volume but we mount it explicitly so Actual's data lives on durable
-block storage (not the VM's ephemeral disk).
+Verify the Caddyfile looks right:
 
 ```bash
-ssh root@$IP
-# Find the volume (Hetzner volumes show up by-id as scsi-0HC_Volume_<id>):
-ls -l /dev/disk/by-id/ | grep HC_Volume
-VOL=/dev/disk/by-id/scsi-0HC_Volume_XXXXXXXX   # <-- yours
-
-mkdir -p /mnt/data
-# The volume was created pre-formatted ext4 by Terraform; just mount it.
-mount $VOL /mnt/data
-mkdir -p /mnt/data/actual
-
-# Persist the mount across reboots:
-echo "$VOL /mnt/data ext4 discard,nofail,defaults 0 0" >> /etc/fstab
+ssh root@$IP 'cat /opt/household-os/actual/Caddyfile'
+# Should show your domain in the site block, e.g.:
+#   budget.yourdomain.com {
+#     reverse_proxy actual-server:5006
+#     tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin.key
+#   }
 ```
-
-## Step 5 — Start Actual
-
-```bash
-cd /opt/household-os/actual
-docker compose up -d
-docker compose ps          # both actual-server and caddy should be Up
-docker compose logs -f caddy   # watch for a clean start
-```
-
-## Step 6 — Verify
-
-1. Visit `https://budget.YOURDOMAIN.com`. You should hit the **Cloudflare Access** login,
-   sign in with an allowlisted Google account, then land on Actual's own login.
-2. **Check the secure context** — in the browser devtools console on the Actual page:
-   ```js
-   crossOriginIsolated   // must be true
-   typeof SharedArrayBuffer  // must be "function"
-   ```
-   If either is wrong, you have a header/HTTPS problem — see Troubleshooting.
-3. From a *non*-allowlisted account (or incognito), confirm Access **blocks** you.
-
-## Step 7 — Set Actual's server password & create the budget
-
-1. On first load Actual asks you to **set a server password** — this is the single shared
-   password layered behind Cloudflare Access (design-doc §2.4). Store it as an integration
-   secret (§4.4): it'll be needed by the finance worker.
-2. Create a budget (or import). If you enable **end-to-end encryption**, you'll set a
-   separate **encryption password** — store that too; the worker needs it to read the file.
-3. **Bank linking:** configure **SimpleFIN or GoCardless inside Actual** (Settings → Bank
-   sync). Do *not* reimplement this in Household OS (design-doc §2.4).
-4. Note the budget's **Sync ID**: Settings → *Show advanced settings* → Sync ID. The worker
-   uses this with `downloadBudget()`.
 
 ---
 
-## Step 8 — How the finance worker will connect (Phase 1, later)
+## Part 8 — Mount the data volume
 
-For reference — this is what the read-only mirror + overspend worker (design-doc §2.4 / §2.5)
-will do once the Hub exists. It runs **in the Hub container on the same box**, so it reaches
-Actual over the internal Docker network and **bypasses Cloudflare Access** (Access blocks
-non-browser clients). Add the Hub service to the same compose network as `actual-server`, then:
+Actual's data (its SQLite file) must live on the **persistent Hetzner volume** — not the
+VPS's root disk, which is ephemeral and would be lost if you ever recreate the server.
+
+SSH into the server:
+
+```bash
+ssh root@$IP
+```
+
+Find the volume device ID:
+
+```bash
+ls -l /dev/disk/by-id/ | grep HC_Volume
+# You'll see something like:
+# lrwxrwxrwx ... scsi-0HC_Volume_12345678 -> ../../sdb
+```
+
+Mount it (replace the volume ID with the one you found above):
+
+```bash
+VOL=/dev/disk/by-id/scsi-0HC_Volume_12345678   # use your actual ID
+
+mkdir -p /mnt/data
+mount $VOL /mnt/data
+mkdir -p /mnt/data/actual
+```
+
+Make the mount survive reboots:
+
+```bash
+echo "$VOL /mnt/data ext4 discard,nofail,defaults 0 0" >> /etc/fstab
+```
+
+Verify it's mounted:
+
+```bash
+df -h /mnt/data
+# Should show the 10 GB volume mounted at /mnt/data
+```
+
+Exit the SSH session:
+
+```bash
+exit
+```
+
+---
+
+## Part 9 — Start Actual
+
+SSH back in and start the Docker stack:
+
+```bash
+ssh root@$IP
+cd /opt/household-os/actual
+docker compose up -d
+```
+
+Check that both services started:
+
+```bash
+docker compose ps
+# Should show two services with Status "Up":
+#   actual_actual-server_1   Up (healthy)
+#   actual_caddy_1           Up
+```
+
+Watch the logs briefly to confirm a clean start:
+
+```bash
+docker compose logs --tail=50 caddy
+# Should end with something like: "serving initial configuration"
+# No errors about certificate files or port conflicts
+
+docker compose logs --tail=20 actual-server
+# Should show the server starting up on port 5006
+```
+
+Exit the SSH session:
+
+```bash
+exit
+```
+
+---
+
+## Part 10 — First-time Actual setup
+
+Open your browser and go to `https://budget.yourdomain.com`.
+
+**You should be redirected to a Cloudflare Access login page.** Sign in with one of the
+Google accounts in your `family_emails` list.
+
+After signing in, you land on Actual's own welcome screen.
+
+### 10a. Set the server password
+
+Actual asks you to set a **server password** on first load. This is a shared password used
+by anyone (and any automation) that connects directly to the server. It lives *behind*
+Cloudflare Access, so it's a second layer of protection, not a public-facing credential.
+
+1. Enter a strong password and confirm it.
+2. Store this password somewhere safe — you'll need it later when the finance worker connects.
+   A password manager entry like `Actual Budget — server password` works well.
+
+### 10b. Create or import a budget
+
+- **New budget:** Click **Start fresh** and follow the prompts to create your budget file.
+- **Existing budget:** Click **Import from Actual** (if migrating from a local Actual install)
+  or **Import from YNAB** (if migrating from YNAB).
+
+### 10c. Optional: Enable end-to-end encryption
+
+If you want your budget file encrypted at rest on the server (so that even if someone gets
+access to the server files, they can't read your data):
+
+1. In Actual, go to **Settings** → **Encryption**.
+2. Enable end-to-end encryption and set an **encryption password**.
+3. Store this password separately from the server password — both are needed by automation.
+   A password manager entry like `Actual Budget — encryption password` works well.
+
+> **Note:** Once E2E encryption is enabled, the `@actual-app/api` library (used by the
+> finance worker later) will need both the server password *and* the encryption password.
+
+### 10d. Set up bank sync (optional but recommended)
+
+Actual supports automatic transaction import via **SimpleFIN** (US) or **GoCardless** (EU/UK).
+
+1. In Actual, go to **Settings** → **Show advanced settings** → **Bank sync**.
+2. Follow the instructions for your bank sync provider to link your accounts.
+
+Do this configuration inside Actual — not in Household OS. Actual handles all the OAuth
+and refresh token management.
+
+### 10e. Note your Sync ID
+
+The finance worker uses this ID to download your budget.
+
+1. In Actual, go to **Settings** → **Show advanced settings**.
+2. Find **Sync ID** — a UUID that looks like `a1b2c3d4-...`.
+3. Note it somewhere — you'll need it when setting up the Hub (Phase 2).
+
+---
+
+## Part 11 — Verify the setup
+
+### 11a. Check the secure context
+
+Actual uses WebAssembly + SharedArrayBuffer, which requires a secure context and specific
+HTTP headers. In your browser on the Actual page, open **DevTools** (F12) → **Console** tab
+and run:
+
+```js
+crossOriginIsolated
+// Must print: true
+
+typeof SharedArrayBuffer
+// Must print: "function"
+```
+
+If either is wrong, see Troubleshooting below before continuing.
+
+### 11b. Test the Access gate from a non-allowlisted account
+
+Open an incognito window (or a different browser) and go to `https://budget.yourdomain.com`.
+You should hit the Cloudflare Access login page. Try signing in with a Google account
+**not** in your `family_emails` list — it should be blocked with an "Access denied" message.
+
+### 11c. Test the data volume persists across restarts
+
+```bash
+ssh root@$IP
+docker compose restart
+docker compose ps    # confirm both services come back Up
+exit
+```
+
+---
+
+## Part 12 — Backups
+
+Actual's data lives in `/mnt/data/actual` on the server. Since Actual uses SQLite, you can't
+hot-copy the file without risk of corruption. The recommended approach:
+
+**Logical export (weekly):** Inside Actual, go to **Settings** → **Export** and download a
+`.zip` of your budget. The goal is to automate this and push it to the R2 bucket Terraform
+created (`terraform output r2_bucket`). Wire R2 credentials (Cloudflare → R2 → Manage API
+Tokens) into a cron job or script that runs this export.
+
+**Volume snapshots (coarse safety net):** In the Hetzner Cloud console, go to your volume →
+**Snapshots** → **Take snapshot**. Do this before any major operation (e.g. server upgrade).
+
+**Exercise a restore at least once** — verify you can actually recover from your backup
+before you depend on it.
+
+> Litestream (for point-in-time recovery) is set up later with the Hub's SQLite database
+> in Phase 2, not with Actual's SQLite file.
+
+---
+
+## What Actual actually is (read this if something seems wrong)
+
+Two facts about Actual that affect everything:
+
+1. **There is no REST API.** Actual's server is a *sync store only* — it holds your data
+   but can't answer budget queries. All budget logic lives in the **`@actual-app/api`
+   Node.js library**, which downloads a local copy and answers queries from that copy.
+   The finance worker (Phase 2) doesn't "hit an Actual endpoint" — it runs the Node library.
+
+2. **It needs a secure context + COOP/COEP headers** to use SharedArrayBuffer (its WASM
+   SQLite engine). That means HTTPS end-to-end and **not duplicating** those headers at the
+   proxy level. The `Caddyfile` in this repo is specifically written to let Actual set them
+   and not re-add them — duplicating them causes `SharedArrayBufferMissing`, the #1 self-host
+   failure mode.
+
+---
+
+## How the finance worker will connect (Phase 2 preview)
+
+When the Hub backend exists, it will run on the same VPS in a sibling Docker container,
+connecting to Actual **over the internal Docker network** (bypassing Cloudflare Access,
+which blocks non-browser clients):
 
 ```js
 // npm i @actual-app/api
 import * as api from '@actual-app/api';
 
 await api.init({
-  dataDir: '/mnt/data/hub/actual-cache',   // local synced copy, on the durable volume
-  serverURL: 'http://actual-server:5006',  // internal network, NOT the public host
-  password: process.env.ACTUAL_PASSWORD,   // the server password from Step 7
+  dataDir: '/mnt/data/hub/actual-cache',  // local synced copy on the durable volume
+  serverURL: 'http://actual-server:5006', // internal network — NOT the public URL
+  password: process.env.ACTUAL_PASSWORD,  // server password from Step 10a
 });
 
 await api.downloadBudget(process.env.ACTUAL_SYNC_ID, {
-  password: process.env.ACTUAL_E2E_PASSWORD, // only if E2E encryption is on
+  password: process.env.ACTUAL_E2E_PASSWORD,  // only if E2E encryption is on (Step 10c)
 });
 
-await api.sync();                          // pull latest before every read
+await api.sync();
 const june = await api.getBudgetMonth('2026-06');
-// -> categories, budgeted, spent, balance ... feed widgets + overspend alerts
 await api.shutdown();
 ```
 
-Read-only: never call the `setBudget*` mutators (design-doc §2.6 forbids write-back).
-If the Hub is ever **not** Node, you'd instead run `actualpy` (Python) or an
-`actual-http-api` sidecar — but §3.1 recommends Node precisely to avoid that.
-
----
-
-## Step 9 — Backups
-
-- **Actual's data** (`/mnt/data/actual`) is its own SQLite — **Litestream does not cover it**
-  (Litestream is for the Hub's SQLite). For Actual, use:
-  - a **weekly logical export** from inside Actual (Settings → Export) pushed to the R2
-    bucket (`terraform output r2_bucket`), and
-  - Hetzner **volume snapshots** as a coarse safety net.
-- Wire R2 credentials (R2 → Manage API Tokens) into whatever runs the export. The
-  point-in-time Litestream stream is set up later with the Hub, not here.
-- **Exercise a restore** at least once — design-doc §5.1 makes this non-negotiable.
+Read-only: never call `setBudget*` mutators — the design forbids write-back to Actual.
 
 ---
 
@@ -217,18 +574,27 @@ If the Hub is ever **not** Node, you'd instead run `actualpy` (Python) or an
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `SharedArrayBufferMissing` / blank app | COOP/COEP headers missing or **duplicated** | Don't set them in Caddy — let Actual. Confirm `crossOriginIsolated === true`. Ensure Cloudflare isn't stripping them (it shouldn't on a proxied host). |
-| Browser cert warning / 526 from Cloudflare | SSL mode not *Full (strict)*, or Origin cert/key mismatch on the box | Set zone SSL to **Full (strict)**; re-copy `origin.pem`/`origin.key` from the TF outputs. |
-| Access login loops or never appears | Google IdP not added in Zero Trust, or DNS not proxied | Add Google under Zero Trust → Authentication; confirm the DNS record is **orange-clouded**. |
-| Worker gets 403/redirected to login | It's going through the public host / Access | Point the worker at `http://actual-server:5006` on the internal network. |
-| Can't SSH | `admin_ip_cidr` is stale (your IP changed) | Update the var and `terraform apply`, or edit the firewall rule. |
+| `SharedArrayBufferMissing` / blank white app | COOP/COEP headers missing or **duplicated** at the proxy | Don't set these headers in Caddy — let Actual set them. Confirm `crossOriginIsolated === true` in the browser console. Check that Cloudflare isn't stripping them. |
+| Browser cert warning / Cloudflare 526 error | SSL mode not *Full (strict)*, or cert/key mismatch on the server | Set zone SSL to **Full (strict)** in Cloudflare. Re-copy `origin.pem`/`origin.key` from `terraform output`. |
+| Cloudflare Access login page loops forever or never appears | Google IdP not added in Zero Trust, or DNS not proxied through Cloudflare | Check Zero Trust → Settings → Authentication for the Google IdP. Confirm the DNS record is **orange-clouded** (proxied), not grey. |
+| Cloudflare shows "Access denied" even for allowed emails | Email not in `family_emails`, or wrong capitalization | Double-check the email in `terraform.tfvars`; run `terraform apply` after changing it. |
+| Finance worker (Phase 2) gets 403 or redirect to Access login | Worker is hitting the public URL instead of internal network | Point the worker at `http://actual-server:5006` on the Docker internal network, not the public domain. |
+| Can't SSH to the server | `admin_ip_cidr` is stale (your home IP changed) | Find your new IP (`curl ifconfig.me`), update `terraform.tfvars`, run `terraform apply`. Or temporarily allow all IPs via the Hetzner firewall console if you're locked out. |
+| `docker compose up` fails: port already in use | Another process on port 443 or 5006 | `ss -tlnp | grep 443` to find what's using it; kill it or remove it. |
+| Volume not found (`/dev/disk/by-id/` shows no HC_Volume) | Cloud-init hasn't finished attaching it yet | Wait 2 minutes and recheck. Hetzner attaches volumes after the server is booted. |
 
 ---
 
 ## What this does and doesn't cover
 
-**Covered:** Actual running, gated, TLS-correct, backed up, and ready to be read by the Hub.
+**Covered (Phase 1):** Actual running, gated by Cloudflare Access, TLS-correct end-to-end,
+data on persistent storage, backup strategy in place.
 
-**Deferred to later phases:** the Hub backend itself, Litestream for the Hub SQLite, the
-home-side Cloudflare Tunnel for Home Assistant, Playwright/Whole Foods, and the e-ink panel's
-narrow device token. Those build on this same VPS + Cloudflare account.
+**Deferred to later phases:**
+- Hub backend (Phase 2): Node server, finance worker, Litestream for the Hub's SQLite
+- Home-side Cloudflare Tunnel for Home Assistant bridge
+- Playwright/Whole Foods automation
+- E-ink panel and narrow device token
+- Meal planner
+
+All of these will run on this same VPS and Cloudflare account — Phase 1 is the foundation.
