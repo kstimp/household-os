@@ -10,7 +10,7 @@ from later.
 
 **Estimated time:** 60–90 minutes for a first-timer.
 
-**Monthly cost:** ~$5–7 (Hetzner `cx22` VPS + volume). Cloudflare's free plan covers
+**Monthly cost:** ~$8–10 (Hetzner `cpx21` VPS in US East + volume + IPv4). Cloudflare's free plan covers
 everything on the Cloudflare side. R2 storage for backups is free up to 10 GB.
 
 **Architecture at a glance:**
@@ -160,7 +160,8 @@ Your public key is at `~/.ssh/id_ed25519.pub`. You'll paste its contents into
    - `Zone` / `DNS` / `Edit`
    - `Zone` / `SSL and Certificates` / `Edit`
    - `Account` / `Access: Apps and Policies` / `Edit`
-   - `Account` / `Cloudflare R2:Edit`
+   - `Account` / `Access: Organizations, Identity Providers, and Groups` / `Read`
+   - `Account` / `Workers R2 Storage` / `Edit`
 5. Under **Zone Resources**, set it to **Include → Specific zone → [your domain]**.
 6. Click **Continue to summary** → **Create Token**.
 7. **Copy the token now** — Cloudflare will only show it once.
@@ -219,9 +220,13 @@ ssh_public_key = "ssh-ed25519 AAAA... household-os"  # contents of ~/.ssh/id_ed2
 # Your current IP — locks SSH to just your machine
 admin_ip_cidr = "203.0.113.42/32"   # replace with output from Step 4d
 
-# Server sizing — cx22 (2 vCPU, 4 GB RAM) is the minimum; fine for Actual alone
-server_type = "cx22"
-location    = "nbg1"   # Nuremberg; other options: fsn1, hel1, ash, sin
+# Server sizing.
+# NOTE: Hetzner's US locations (ash = Ashburn/US-East, hil = Hillsboro/US-West)
+# only offer the CPX (AMD) and CCX lines — the cx* (Intel) line is EU-only.
+# cpx21 (3 vCPU / 4 GB) is the smallest CPX plan meeting Actual's 4 GB floor.
+# For an EU location instead, use server_type = "cx22" with location = "nbg1"/"fsn1"/"hel1".
+server_type = "cpx21"
+location    = "ash"    # Ashburn, VA (US East). Others: hil (US West), nbg1/fsn1/hel1 (EU), sin
 ```
 
 `terraform.tfvars` is gitignored and will never be committed — it holds all your secrets.
@@ -230,12 +235,39 @@ location    = "nbg1"   # Nuremberg; other options: fsn1, hel1, ash, sin
 
 ## Part 6 — Provision the infrastructure
 
+### 6a. Set up remote state in HCP Terraform (Terraform Cloud)
+
+State is stored remotely in HCP Terraform — not on your laptop — so it's durable,
+versioned, and encrypted (your state contains the Origin cert's private key, so this
+matters). Execution stays **local**, so your secrets never leave your machine: plans and
+applies run here and read from your local `terraform.tfvars`.
+
+1. Sign up at **app.terraform.io** (free tier is fine). The `cloud {}` block in
+   `infra/terraform/versions.tf` is already pointed at org `kstimpert-org`, project
+   `household-os`, workspace `household-os`.
+2. In the HCP Terraform UI, create the **project** named `household-os` (Projects → New
+   project). The project must exist before init; the *workspace* inside it is created
+   automatically on first `terraform init`.
+3. Authenticate the CLI to HCP Terraform — this stores a token locally:
+   ```bash
+   terraform login
+   # Press "yes", then paste the token it opens in your browser
+   ```
+4. After your first `terraform init` (below) creates the `household-os` workspace, go to
+   the workspace in the HCP Terraform UI → **Settings → General** and set
+   **Execution Mode** to **Local**. This keeps plan/apply running on your machine against
+   your local `terraform.tfvars` (otherwise TFC tries to run remotely and won't have your
+   variables).
+
+### 6b. Init, plan, apply
+
 ```bash
 # Still in infra/terraform/
 terraform init
 ```
 
-This downloads the Hetzner, Cloudflare, and TLS providers (~30 seconds).
+This connects to your HCP Terraform workspace and downloads the Hetzner, Cloudflare, and
+TLS providers (~30 seconds).
 
 ```bash
 terraform plan
@@ -273,14 +305,28 @@ terraform output -raw origin_key_pem  > /tmp/origin.key
 
 ## Part 7 — Deploy the stack to the server
 
-Set a shell variable for convenience:
+> **Local vs. remote commands (read once):** Commands in Parts 7–11 run in two places.
+> Anything using `terraform`/`ssh`/`scp` runs **locally** — shown below for both **bash**
+> (macOS/Linux) and **PowerShell 7** (Windows). Everything you type *after* you SSH into the
+> server runs in the server's **Linux** shell — type those exactly as written, no matter your
+> local shell. PowerShell users: confirm your 1Password agent is serving the key in this same
+> session with `ssh-add -l` before connecting.
 
+Set a shell variable for convenience (the server IP):
+
+**bash (macOS/Linux):**
 ```bash
 IP=$(terraform output -raw server_ipv4)
 ```
 
+**PowerShell 7 (Windows):**
+```powershell
+$IP = terraform output -raw server_ipv4
+```
+
 Wait for cloud-init to finish (Docker is installed on first boot):
 
+**bash (macOS/Linux):**
 ```bash
 # SSH in and check — you may need to wait 2-3 minutes after terraform apply finishes
 ssh root@$IP "docker --version"
@@ -288,14 +334,29 @@ ssh root@$IP "docker --version"
 # If you get "command not found", wait another minute and retry
 ```
 
+**PowerShell 7 (Windows):**
+```powershell
+# Same command — $IP must be set in this PowerShell session
+ssh root@$IP "docker --version"
+```
+
 Copy the Docker Compose stack to the server:
 
+**bash (macOS/Linux):**
 ```bash
 scp -r ../actual root@$IP:/opt/household-os/actual
 ```
 
+**PowerShell 7 (Windows):**
+```powershell
+# ${IP} braces are required before the ":" so PowerShell doesn't read "$IP:" as a drive;
+# the local source path uses a backslash.
+scp -r ..\actual root@${IP}:/opt/household-os/actual
+```
+
 Create the certs directory and copy in the Origin certificate:
 
+**bash (macOS/Linux):**
 ```bash
 ssh root@$IP 'mkdir -p /opt/household-os/actual/certs'
 scp /tmp/origin.pem root@$IP:/opt/household-os/actual/certs/origin.pem
@@ -303,13 +364,36 @@ scp /tmp/origin.key root@$IP:/opt/household-os/actual/certs/origin.key
 ssh root@$IP 'chmod 600 /opt/household-os/actual/certs/origin.key'
 ```
 
-Update the Caddyfile with your actual domain (the file ships with a placeholder):
+**PowerShell 7 (Windows):**
+```powershell
+# Part 6 wrote the certs to /tmp (Unix-only), so re-export them to a Windows temp path.
+# PowerShell 7's ">" writes UTF-8 without a BOM, which Caddy reads fine.
+terraform output -raw origin_cert_pem > $env:TEMP\origin.pem
+terraform output -raw origin_key_pem  > $env:TEMP\origin.key
 
-```bash
-ssh root@$IP "sed -i 's/budget.example.com/budget.$(terraform output -raw domain)/' /opt/household-os/actual/Caddyfile"
+ssh root@$IP 'mkdir -p /opt/household-os/actual/certs'
+scp $env:TEMP\origin.pem root@${IP}:/opt/household-os/actual/certs/origin.pem
+scp $env:TEMP\origin.key root@${IP}:/opt/household-os/actual/certs/origin.key
+ssh root@$IP 'chmod 600 /opt/household-os/actual/certs/origin.key'
 ```
 
-Verify the Caddyfile looks right:
+Update the Caddyfile with your actual host (the file ships with the placeholder
+`budget.example.com`):
+
+**bash (macOS/Linux):**
+```bash
+BUDGET_HOST=$(terraform output -raw budget_host)
+ssh root@$IP "sed -i 's/budget.example.com/$BUDGET_HOST/' /opt/household-os/actual/Caddyfile"
+```
+
+**PowerShell 7 (Windows):**
+```powershell
+# NOTE: don't name this $HOST — that's a read-only PowerShell automatic variable.
+$budgetHost = terraform output -raw budget_host
+ssh root@$IP "sed -i 's/budget.example.com/$budgetHost/' /opt/household-os/actual/Caddyfile"
+```
+
+Verify the Caddyfile looks right (same single-quoted command in both shells):
 
 ```bash
 ssh root@$IP 'cat /opt/household-os/actual/Caddyfile'
@@ -327,11 +411,15 @@ ssh root@$IP 'cat /opt/household-os/actual/Caddyfile'
 Actual's data (its SQLite file) must live on the **persistent Hetzner volume** — not the
 VPS's root disk, which is ephemeral and would be lost if you ever recreate the server.
 
-SSH into the server:
+SSH into the server (`ssh root@$IP` works identically in bash and PowerShell, as long as
+`$IP` is set in that session):
 
 ```bash
 ssh root@$IP
 ```
+
+> Everything from here through the end of Part 8 runs **on the server's Linux shell** — type
+> it exactly as shown regardless of whether you connected from bash or PowerShell.
 
 Find the volume device ID:
 
@@ -374,7 +462,8 @@ exit
 
 ## Part 9 — Start Actual
 
-SSH back in and start the Docker stack:
+SSH back in and start the Docker stack (the `ssh root@$IP` line is local — same in bash and
+PowerShell; the `cd`/`docker` lines run on the server):
 
 ```bash
 ssh root@$IP
@@ -466,6 +555,31 @@ The finance worker uses this ID to download your budget.
 2. Find **Sync ID** — a UUID that looks like `a1b2c3d4-...`.
 3. Note it somewhere — you'll need it when setting up the Hub (Phase 2).
 
+### 10f. Using Actual on your other devices — use the browser/PWA, not the native apps
+
+Cloudflare Access only admits **interactive browser logins** (it gates the site behind the
+Google SSO redirect, which needs a real browser to complete). The Actual **desktop and mobile
+apps connect with direct API calls**, can't perform that SSO, and will report
+**"server isn't running"** — they're receiving the Access login page instead of the server.
+
+**Use the web app instead — you lose nothing, including offline use.** Actual is *local-first*:
+every client keeps a full local copy of your budget (WASM SQLite in the browser) and the server
+only relays changes between devices (see "What Actual actually is" below). So:
+
+1. On each device, open `https://budget.yourdomain.com` in a browser and sign in with Google.
+2. Use the browser's **Install app / Add to Home Screen** to install it as a PWA — you get an
+   app-like icon and window, offline app-shell loading (service worker), and persistent local
+   storage so the browser won't evict your budget copy.
+3. Edit offline freely; changes sync to the server and your other devices when you reconnect —
+   exactly as a native app would.
+
+> **Sync vs. Access sessions:** offline *editing* is never blocked, but the *sync* channel needs
+> a live Access cookie. When it expires (`access_session_duration`, default **1 month** in this
+> repo), the next online sync redirects to Google login — just **reload the page** to re-auth and
+> sync resumes. If you genuinely need a native app, the only real options are enrolling the device
+> in Cloudflare **WARP** or using a service token for header-capable API clients (the GUI apps
+> can't send those headers).
+
 ---
 
 ## Part 11 — Verify the setup
@@ -493,6 +607,8 @@ You should hit the Cloudflare Access login page. Try signing in with a Google ac
 **not** in your `family_emails` list — it should be blocked with an "Access denied" message.
 
 ### 11c. Test the data volume persists across restarts
+
+The `ssh root@$IP` line is local (same in bash and PowerShell); the rest runs on the server:
 
 ```bash
 ssh root@$IP
@@ -579,6 +695,8 @@ Read-only: never call `setBudget*` mutators — the design forbids write-back to
 | Cloudflare Access login page loops forever or never appears | Google IdP not added in Zero Trust, or DNS not proxied through Cloudflare | Check Zero Trust → Settings → Authentication for the Google IdP. Confirm the DNS record is **orange-clouded** (proxied), not grey. |
 | Cloudflare shows "Access denied" even for allowed emails | Email not in `family_emails`, or wrong capitalization | Double-check the email in `terraform.tfvars`; run `terraform apply` after changing it. |
 | Finance worker (Phase 2) gets 403 or redirect to Access login | Worker is hitting the public URL instead of internal network | Point the worker at `http://actual-server:5006` on the Docker internal network, not the public domain. |
+| Actual **desktop/mobile app** says "server isn't running" | Cloudflare Access only admits interactive **browser** SSO; native apps can't complete Google login and receive the Access login page | Use the **web app / PWA** in a browser instead — fully local-first, see Part 10f. Or enroll the device in Cloudflare **WARP**. A service token only helps header-capable API clients, not the GUI apps. |
+| Web/PWA stops syncing after a while (still works offline, won't push/pull) | Access session expired, so sync requests get redirected to the login page | **Reload the page** to re-auth via Google; sync resumes. To re-login less often, raise `access_session_duration` (default 1 month) and `terraform apply`. |
 | Can't SSH to the server | `admin_ip_cidr` is stale (your home IP changed) | Find your new IP (`curl ifconfig.me`), update `terraform.tfvars`, run `terraform apply`. Or temporarily allow all IPs via the Hetzner firewall console if you're locked out. |
 | `docker compose up` fails: port already in use | Another process on port 443 or 5006 | `ss -tlnp | grep 443` to find what's using it; kill it or remove it. |
 | Volume not found (`/dev/disk/by-id/` shows no HC_Volume) | Cloud-init hasn't finished attaching it yet | Wait 2 minutes and recheck. Hetzner attaches volumes after the server is booted. |
