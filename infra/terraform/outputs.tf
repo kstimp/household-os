@@ -8,6 +8,11 @@ output "budget_url" {
   value       = "https://${local.budget_host}"
 }
 
+output "budget_host" {
+  description = "Public hostname Actual is served at (e.g. budget.yourdomain.com). Used to fill the Caddyfile placeholder."
+  value       = local.budget_host
+}
+
 output "origin_cert_pem" {
   description = "Cloudflare Origin certificate — write to infra/actual/certs/origin.pem on the box."
   value       = cloudflare_origin_ca_certificate.budget.certificate

@@ -105,14 +105,24 @@ resource "cloudflare_origin_ca_certificate" "budget" {
   requested_validity = 5475 # 15 years
 }
 
+# The Google login method you added in Zero Trust > Settings > Authentication
+# (install doc step 2a). Looked up by name so we don't hardcode its UUID.
+data "cloudflare_zero_trust_access_identity_provider" "google" {
+  account_id = var.cloudflare_account_id
+  name       = var.google_idp_name
+}
+
 # Cloudflare Access: only allowlisted Google accounts reach Actual at all.
 resource "cloudflare_zero_trust_access_application" "budget" {
-  account_id                = var.cloudflare_account_id
-  name                      = "Household OS — Budget (Actual)"
-  domain                    = local.budget_host
-  type                      = "self_hosted"
-  session_duration          = "24h"
-  app_launcher_visible      = true
+  account_id           = var.cloudflare_account_id
+  name                 = "Household OS — Budget (Actual)"
+  domain               = local.budget_host
+  type                 = "self_hosted"
+  session_duration     = var.access_session_duration
+  app_launcher_visible = true
+
+  # auto_redirect_to_identity requires exactly one entry in allowed_idps.
+  allowed_idps              = [data.cloudflare_zero_trust_access_identity_provider.google.id]
   auto_redirect_to_identity = true
 }
 
