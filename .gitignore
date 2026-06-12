@@ -1,0 +1,29 @@
+# ── Secrets & credentials (defense-in-depth; infra/terraform has its own too) ──
+# Filled-in Terraform variables — tokens, keys, emails.
+terraform.tfvars
+*.auto.tfvars
+# Terraform state can contain secrets — never commit it.
+*.tfstate
+*.tfstate.*
+.terraform/
+# Rendered cert/key material (Cloudflare Origin cert, SSH keys, etc.).
+certs/
+*.pem
+*.key
+# Environment files.
+.env
+.env.*
+!.env.example
+
+# ── Node (Hub backend / finance worker, Phase 2) ──
+node_modules/
+npm-debug.log*
+yarn-error.log*
+dist/
+build/
+
+# ── OS / editor junk ──
+.DS_Store
+Thumbs.db
+.idea/
+*.swp

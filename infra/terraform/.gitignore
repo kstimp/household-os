@@ -2,7 +2,10 @@
 *.tfstate
 *.tfstate.*
 .terraform/
-.terraform.lock.hcl
+
+# Saved plan files embed resolved secret values (tokens, keys) — never commit.
+tfplan
+*.tfplan
 
 # Your filled-in variables (tokens, keys).
 terraform.tfvars
