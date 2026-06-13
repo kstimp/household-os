@@ -14,6 +14,9 @@ certs/
 .env
 .env.*
 !.env.example
+# Filled-in MCP server secrets (Actual password, E2E key, Bearer token).
+mcp.env
+!mcp.env.example
 
 # ── Node (Hub backend / finance worker, Phase 2) ──
 node_modules/

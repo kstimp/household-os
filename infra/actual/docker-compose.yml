@@ -21,11 +21,39 @@ services:
       timeout: 10s
       retries: 3
 
+  # AI-facing MCP budget server (agigante80/actual-mcp-server). See ADR-0002 and
+  # docs/mcp-budget-server.md. Like actual-server, it is NOT published to the host
+  # (no `ports:`) — Caddy reverse-proxies to it. It reaches Actual over THIS internal
+  # compose network at http://actual-server:5006, bypassing Cloudflare Access (a
+  # non-browser client Access would otherwise block). Its own Bearer/OIDC token is
+  # the gate. Secrets come from mcp.env (gitignored; copy from mcp.env.example).
+  actual-mcp:
+    image: ghcr.io/agigante80/actual-mcp-server:latest
+    restart: unless-stopped
+    depends_on:
+      - actual-server
+    expose:
+      - "3600"
+    env_file:
+      - ./mcp.env
+    environment:
+      # Talk to Actual over the internal network, not the public URL.
+      ACTUAL_SERVER_URL: "http://actual-server:5006"
+      # HTTP transport bound inside the container; Caddy terminates public TLS.
+      MCP_BRIDGE_PORT: "3600"
+      MCP_BRIDGE_BIND_HOST: "0.0.0.0"
+      # The @actual-app/api library keeps a full local synced budget copy here.
+      MCP_BRIDGE_DATA_DIR: "/app/data"
+    volumes:
+      # Persist the synced budget copy on the Hetzner data volume.
+      - /mnt/data/actual-mcp:/app/data
+
   caddy:
     image: caddy:2
     restart: unless-stopped
     depends_on:
       - actual-server
+      - actual-mcp
     ports:
       - "80:80"
       - "443:443"
