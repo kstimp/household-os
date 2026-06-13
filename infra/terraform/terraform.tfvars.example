@@ -16,7 +16,8 @@ family_emails = [
 admin_ssh_public_key = "ssh-ed25519 AAAA... you@laptop"
 admin_ip_cidr        = "203.0.113.4/32"
 
-# Optional overrides:
-# server_type    = "cx22"
-# location       = "fsn1"
+# Optional overrides (defaults: US East / cpx21):
+# server_type    = "cpx21"   # US locations need cpx*; cx22 is EU-only
+# location       = "ash"     # ash = US East, hil = US West, nbg1/fsn1/hel1 = EU
 # volume_size_gb = 20
+# access_session_duration = "730h"  # Access re-login interval; 1 month default, "24h" for daily

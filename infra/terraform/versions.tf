@@ -21,8 +21,19 @@ terraform {
     }
   }
 
-  # Recommended: keep state off your laptop once this is real.
-  # backend "s3" {}  # R2 is S3-compatible; wire this up after first apply.
+  # Remote state in HCP Terraform (Terraform Cloud).
+  # - Replace `organization` with your TFC org name.
+  # - Set the workspace's Execution Mode to "Local" in the TFC UI so plans/
+  #   applies still run on your machine and read secrets from your local
+  #   terraform.tfvars — nothing sensitive gets uploaded to TFC. State itself
+  #   is stored (encrypted, locked, versioned) in TFC.
+  cloud {
+    organization = "kstimpert-org"
+    workspaces {
+      project = "household-os"
+      name    = "household-os"
+    }
+  }
 }
 
 provider "hcloud" {
