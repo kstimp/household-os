@@ -25,6 +25,28 @@ output "origin_key_pem" {
   sensitive   = true
 }
 
+output "mcp_url" {
+  description = "Where the MCP budget server endpoint will live (append the MCP path, default /http)."
+  value       = "https://${local.mcp_host}"
+}
+
+output "mcp_host" {
+  description = "Public hostname the MCP server is served at. Used to fill the Caddyfile mcp placeholder."
+  value       = local.mcp_host
+}
+
+output "mcp_origin_cert_pem" {
+  description = "Cloudflare Origin certificate for the MCP host — write to certs/mcp-origin.pem on the box."
+  value       = cloudflare_origin_ca_certificate.mcp.certificate
+  sensitive   = true
+}
+
+output "mcp_origin_key_pem" {
+  description = "Origin private key for the MCP host — write to certs/mcp-origin.key on the box (chmod 600)."
+  value       = tls_private_key.mcp_origin.private_key_pem
+  sensitive   = true
+}
+
 output "r2_bucket" {
   description = "Backup bucket name for Litestream + weekly Actual exports."
   value       = cloudflare_r2_bucket.backups.name

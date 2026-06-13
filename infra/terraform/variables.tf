@@ -39,6 +39,17 @@ variable "budget_subdomain" {
   default     = "budget"
 }
 
+variable "mcp_subdomain" {
+  description = <<-EOT
+    Subdomain the AI-facing MCP budget server is served at (ADR-0002). Final host =
+    <mcp_subdomain>.<domain>. NOTE: unlike the budget host, this one is deliberately
+    NOT behind Cloudflare Access — the gate is the MCP server's own Bearer/OIDC auth,
+    because an MCP client is a non-browser client that Access would block.
+  EOT
+  type        = string
+  default     = "mcp-budget"
+}
+
 # ---- Access control -------------------------------------------------------
 
 variable "family_emails" {

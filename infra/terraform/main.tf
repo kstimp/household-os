@@ -1,5 +1,6 @@
 locals {
   budget_host = "${var.budget_subdomain}.${var.domain}"
+  mcp_host    = "${var.mcp_subdomain}.${var.domain}"
 }
 
 # ---------------------------------------------------------------------------
@@ -136,6 +137,53 @@ resource "cloudflare_zero_trust_access_policy" "budget_family" {
   include {
     email = var.family_emails
   }
+}
+
+# ---------------------------------------------------------------------------
+# Edge: MCP budget server (agigante80/actual-mcp-server). See ADR-0002.
+#
+# This host serves the AI-facing MCP endpoint, NOT a browser app. Two things
+# differ deliberately from the budget host above:
+#
+#   1. NO Cloudflare Access application. Access only admits interactive browser
+#      SSO; an MCP client (Claude.ai/Desktop connector) is a non-browser client
+#      and would receive the Access login page instead of the server — the same
+#      failure the native Actual apps hit (install-actual.md §10f). The gate here
+#      is the MCP server's OWN auth: a static Bearer token (MCP_SSE_AUTHORIZATION)
+#      for v1, upgradeable to OIDC/JWT. See the eval doc for the threat model.
+#   2. Still Cloudflare-proxied (orange cloud) so the origin IP stays hidden and
+#      we get TLS + WAF + rate-limiting in front of the token gate.
+# ---------------------------------------------------------------------------
+
+resource "cloudflare_record" "mcp" {
+  zone_id = var.cloudflare_zone_id
+  name    = var.mcp_subdomain
+  type    = "A"
+  content = hcloud_server.hub.ipv4_address
+  proxied = true # orange cloud: TLS + WAF in front; NO Access app on this host (see above).
+  ttl     = 1
+}
+
+# Separate Origin keypair + cert for the MCP host (the budget cert only covers
+# budget_host). Same 15-year origin-CA pattern so Caddy can serve Full (strict).
+resource "tls_private_key" "mcp_origin" {
+  algorithm = "RSA"
+  rsa_bits  = 2048
+}
+
+resource "tls_cert_request" "mcp_origin" {
+  private_key_pem = tls_private_key.mcp_origin.private_key_pem
+  subject {
+    common_name = local.mcp_host
+  }
+  dns_names = [local.mcp_host]
+}
+
+resource "cloudflare_origin_ca_certificate" "mcp" {
+  csr                = tls_cert_request.mcp_origin.cert_request_pem
+  hostnames          = [local.mcp_host]
+  request_type       = "origin-rsa"
+  requested_validity = 5475 # 15 years
 }
 
 # ---------------------------------------------------------------------------

@@ -10,3 +10,14 @@ budget.example.com {
 
 	reverse_proxy actual-server:5006
 }
+
+# AI-facing MCP budget server (ADR-0002). Replace mcp-budget.example.com with your
+# real host (matches Terraform's mcp_host output). This is a plain JSON/HTTP MCP
+# endpoint — no SharedArrayBuffer, so none of the COOP/COEP concerns above apply.
+# There is deliberately NO Cloudflare Access app on this host: the MCP server's own
+# Bearer/OIDC token is the gate (Access would block the non-browser MCP client).
+mcp-budget.example.com {
+	tls /certs/mcp-origin.pem /certs/mcp-origin.key
+
+	reverse_proxy actual-mcp:3600
+}
