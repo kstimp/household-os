@@ -5,7 +5,7 @@
 # here — Actual sets those itself, and adding them again would DUPLICATE the headers,
 # which browsers reject with a fatal `SharedArrayBufferMissing` error. Let Actual own them.
 
-budget.example.com {
+money.example.com {
 	tls /certs/origin.pem /certs/origin.key
 
 	reverse_proxy actual-server:5006
