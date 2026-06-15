@@ -116,6 +116,7 @@ Prerequisite: Actual is up (install doc Parts 1–11), and you know your Actual
 The Terraform in `infra/terraform/` already includes the `mcp-budget` DNS record
 and its Origin cert (no Access app — see ADR-0002). From `infra/terraform/`:
 
+**bash:**
 ```bash
 terraform plan    # review: 1 new DNS record + 1 new origin cert, NO new Access app
 terraform apply
@@ -126,8 +127,20 @@ terraform output -raw mcp_origin_key_pem  > /tmp/mcp-origin.key
 MCP_HOST=$(terraform output -raw mcp_host)
 ```
 
+**PowerShell:**
+```powershell
+terraform plan    # review: 1 new DNS record + 1 new origin cert, NO new Access app
+terraform apply
+
+# Export the MCP host's origin cert/key (note the mcp_* outputs):
+terraform output -raw mcp_origin_cert_pem | Out-File -Encoding ascii "$env:TEMP\mcp-origin.pem"
+terraform output -raw mcp_origin_key_pem  | Out-File -Encoding ascii "$env:TEMP\mcp-origin.key"
+$MCP_HOST = (terraform output -raw mcp_host).Trim()
+```
+
 ### 2. Ship cert + config to the box
 
+**bash:**
 ```bash
 IP=$(terraform output -raw server_ipv4)
 
@@ -144,7 +157,26 @@ scp ../actual/docker-compose.yml ../actual/Caddyfile ../actual/mcp.env.example \
 ssh root@$IP "sed -i 's/mcp-budget.example.com/$MCP_HOST/' /opt/household-os/actual/Caddyfile"
 ```
 
+**PowerShell:**
+```powershell
+$IP = (terraform output -raw server_ipv4).Trim()
+
+# Origin cert/key for the MCP host (alongside the budget cert already there):
+scp "$env:TEMP\mcp-origin.pem" root@${IP}:/opt/household-os/actual/certs/mcp-origin.pem
+scp "$env:TEMP\mcp-origin.key" root@${IP}:/opt/household-os/actual/certs/mcp-origin.key
+ssh root@$IP 'chmod 600 /opt/household-os/actual/certs/mcp-origin.key'
+
+# Re-copy the updated compose + Caddyfile (now include the actual-mcp service/site):
+scp ..\actual\docker-compose.yml ..\actual\Caddyfile ..\actual\mcp.env.example `
+    root@${IP}:/opt/household-os/actual/
+
+# Fill the Caddyfile placeholder for the MCP host:
+ssh root@$IP "sed -i 's/mcp-budget.example.com/$MCP_HOST/' /opt/household-os/actual/Caddyfile"
+```
+
 ### 3. Create the secrets file
+
+*(Steps 3–4 run inside an interactive SSH session on the Linux server — no PowerShell translation needed. If `$IP` is not set from step 2, re-assign it first: PowerShell: `$IP = (terraform output -raw server_ipv4).Trim()`)*
 
 ```bash
 ssh root@$IP

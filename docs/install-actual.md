@@ -621,20 +621,157 @@ exit
 
 ## Part 12 — Backups
 
-Actual's data lives in `/mnt/data/actual` on the server. Since Actual uses SQLite, you can't
-hot-copy the file without risk of corruption. The recommended approach:
+Actual's data lives in `/mnt/data/actual` on the server. The weekly backup script in
+`infra/actual/backup.sh` briefly pauses the Actual container, archives the data directory,
+and uploads it to the R2 bucket Terraform created. A systemd timer fires it every Sunday at
+03:00 UTC. Eight weeks of archives are kept; older ones are pruned automatically.
 
-**Logical export (weekly):** Inside Actual, go to **Settings** → **Export** and download a
-`.zip` of your budget. The goal is to automate this and push it to the R2 bucket Terraform
-created (`terraform output r2_bucket`). Wire R2 credentials (Cloudflare → R2 → Manage API
-Tokens) into a cron job or script that runs this export.
+### 12a. Create an R2 API token
 
-**Volume snapshots (coarse safety net):** In the Hetzner Cloud console, go to your volume →
-**Snapshots** → **Take snapshot**. Do this before any major operation (e.g. server upgrade).
+This token is separate from your Terraform token — it only needs R2 write access.
 
-**Exercise a restore at least once** — verify you can actually recover from your backup
-before you depend on it.
+1. In Cloudflare, go to **R2 Object Storage** → **Manage R2 API Tokens** → **Create API Token**.
+2. Name it `household-os-backup`.
+3. Set permissions: **Object Read & Write**, restricted to bucket `household-os-backups`.
+4. Click **Create API Token**. Copy the **Access Key ID**, **Secret Access Key**, and note
+   your **Account ID** (shown in the R2 dashboard sidebar, or read from `terraform.tfvars`).
 
+### 12b. Install rclone on the server
+
+Set `$IP` if it isn't already (same as Part 6/7):
+
+**bash:**
+
+```bash
+IP=$(terraform output -raw server_ipv4)
+```
+
+**PowerShell:**
+
+```powershell
+$IP = (terraform output -raw server_ipv4).Trim()
+```
+
+SSH in and install rclone:
+
+```bash
+ssh root@$IP
+curl https://rclone.org/install.sh | sudo bash
+```
+
+Configure rclone for R2 (replace the three placeholders with the values from step 12a):
+
+```bash
+rclone config create r2 s3 \
+  provider=Cloudflare \
+  access_key_id=<ACCESS_KEY_ID> \
+  secret_access_key=<SECRET_ACCESS_KEY> \
+  endpoint=https://<ACCOUNT_ID>.r2.cloudflarestorage.com \
+  acl=private
+```
+
+Verify connectivity (empty output is fine — bucket exists but has no files yet):
+
+```bash
+rclone ls r2:household-os-backups/
+exit
+```
+
+### 12c. Copy the backup and restore scripts to the server
+
+*(Run locally — `$IP` must be set in this shell.)*
+
+**bash:**
+
+```bash
+scp ../actual/backup.sh ../actual/restore.sh root@$IP:/opt/household-os/actual/
+ssh root@$IP 'chmod +x /opt/household-os/actual/backup.sh /opt/household-os/actual/restore.sh'
+```
+
+**PowerShell:**
+
+```powershell
+scp ..\actual\backup.sh ..\actual\restore.sh root@${IP}:/opt/household-os/actual/
+ssh root@$IP 'chmod +x /opt/household-os/actual/backup.sh /opt/household-os/actual/restore.sh'
+```
+
+### 12d. Install the systemd timer
+
+*(On the server — the heredocs below work in bash; copy-paste line by line if your terminal
+struggles with the multi-line form.)*
+
+```bash
+ssh root@$IP
+
+cat > /etc/systemd/system/actual-backup.service << 'EOF'
+[Unit]
+Description=Actual Budget weekly backup to Cloudflare R2
+
+[Service]
+Type=oneshot
+ExecStart=/opt/household-os/actual/backup.sh
+StandardOutput=journal
+StandardError=journal
+EOF
+
+cat > /etc/systemd/system/actual-backup.timer << 'EOF'
+[Unit]
+Description=Weekly Actual Budget backup
+
+[Timer]
+OnCalendar=Sun *-*-* 03:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now actual-backup.timer
+systemctl list-timers actual-backup.timer   # confirm: NEXT and LAST columns appear
+exit
+```
+
+### 12e. Test a manual run
+
+```bash
+ssh root@$IP
+/opt/household-os/actual/backup.sh
+# Prints timestamps + "Backup complete." — total pause time is under 1 second
+
+rclone ls r2:household-os-backups/actual-backups/
+# Should show the new .tar.gz with its size and name
+exit
+```
+
+### 12f. Volume snapshots (coarse safety net)
+
+In the Hetzner Cloud console, go to your volume → **Snapshots** → **Take snapshot** before
+any major operation (server rebuild, destructive `terraform apply`).
+
+### 12g. Exercise a restore before you need it
+
+The restore script (`restore.sh`) stops Actual, moves the current data directory aside
+as `actual.bak.<timestamp>`, extracts the chosen backup, and restarts. Run it on the server:
+
+```bash
+ssh root@$IP
+
+# List backups and restore the most recent one:
+/opt/household-os/actual/restore.sh
+
+# Or restore a specific archive by name:
+/opt/household-os/actual/restore.sh actual-20260601T030000Z.tar.gz
+```
+
+The script prompts for confirmation before touching anything. If the restore looks wrong,
+roll back with the command it prints at the end (swap the `.bak.` directory back).
+
+> **Note on the UI export format:** The backup and restore scripts operate on Actual's raw
+> server data directory — not the `.zip` you get from Settings → Export. These are not
+> interchangeable: use the UI export if you want to migrate to a new Actual instance or
+> share a budget; use the scripts when recovering this server from failure.
+>
 > Litestream (for point-in-time recovery) is set up later with the Hub's SQLite database
 > in Phase 2, not with Actual's SQLite file.
 
