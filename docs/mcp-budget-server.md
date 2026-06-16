@@ -283,21 +283,33 @@ balances") before trying any write.
 
 Migrate the gate from the shared Bearer token to per-user OIDC. Run this **after**
 the Bearer deployment (steps 1–6) is live; it keeps Bearer working until OIDC is
-verified, so it is reversible at every step. Commands run in an SSH session on the
-box unless noted. `$IP` / `$MCP_HOST` come from `terraform output` (step 2).
+verified, so it is reversible at every step. Steps below are tagged **(workstation)**
+— run on your local machine, bash + PowerShell shown — or **(on the box)** — run
+inside the SSH session on the Linux server (no PowerShell translation needed, same as
+steps 3–4). `$IP` / `$MCP_HOST` come from `terraform output` (step 2); re-assign them
+if your shell has lost them (PowerShell: `$MCP_HOST = (terraform output -raw mcp_host).Trim()`).
 
-**7a. (optional) Stand up the Cloudflare Access service-token layer.** Skip if you
-are doing pure OIDC (path a). From `infra/terraform/` on your workstation:
+**7a. (optional) Stand up the Cloudflare Access service-token layer — (workstation).**
+Skip if you are doing pure OIDC (path a). From `infra/terraform/` (adds 1 Access app
++ 1 service token on the MCP host):
 
+**bash:**
 ```bash
-# Enable the opt-in layer, then apply (adds 1 Access app + 1 service token on the MCP host):
 echo 'enable_mcp_access_service_token = true' >> terraform.tfvars
 terraform apply
 terraform output -raw mcp_access_service_token_client_id      # CF-Access-Client-Id
 terraform output -raw mcp_access_service_token_secret         # CF-Access-Client-Secret (store with the client)
 ```
 
-**7b. Add the OIDC block to `mcp.env` (keep the Bearer token set).**
+**PowerShell:**
+```powershell
+Add-Content terraform.tfvars 'enable_mcp_access_service_token = true'
+terraform apply
+terraform output -raw mcp_access_service_token_client_id      # CF-Access-Client-Id
+terraform output -raw mcp_access_service_token_secret         # CF-Access-Client-Secret (store with the client)
+```
+
+**7b. Add the OIDC block to `mcp.env`, keeping the Bearer token set — (on the box).**
 
 ```bash
 ssh root@$IP
@@ -312,41 +324,67 @@ OIDC
 nano mcp.env          # fill the three <...> placeholders; leave MCP_SSE_AUTHORIZATION in place
 docker compose up -d actual-mcp
 docker compose logs --tail=40 actual-mcp   # should report OIDC/JWKS init, no errors
+exit
 ```
 
-**7c. Obtain a valid JWT for testing** (path a). On your workstation, using
-`cloudflared` against the MCP host's Access app (its AUD must equal `OIDC_RESOURCE`):
+**7c. Obtain a valid JWT for testing — (workstation).** Use `cloudflared` against the
+MCP host's Access app (its AUD must equal `OIDC_RESOURCE`):
 
+**bash:**
 ```bash
-cloudflared access login  https://$MCP_HOST
+cloudflared access login https://$MCP_HOST
 JWT=$(cloudflared access token --app=https://$MCP_HOST)   # short-lived, issuer-minted
 ```
 
-**7d. Run the acceptance criteria.** This probe POSTs a standard MCP `tools/list`
-(gated by the auth layer, so HTTP status cleanly proves accept/reject) and prints the
-status code:
+**PowerShell:**
+```powershell
+cloudflared access login "https://$MCP_HOST"
+$JWT = cloudflared access token --app="https://$MCP_HOST"  # short-lived, issuer-minted
+```
 
+**7d. Run the acceptance criteria — (workstation).** Define a probe that POSTs a
+standard MCP `tools/list` (gated by the auth layer, so the HTTP status cleanly proves
+accept vs reject), then call it per test. If 7a is enabled, also send the
+`CF-Access-Client-Id` / `CF-Access-Client-Secret` headers (curl `-H`, or add them to
+the PowerShell `$headers` hashtable).
+
+**bash:**
 ```bash
-probe() {  # usage: probe "<Authorization header value>" [extra curl args...]
+probe() {  # usage: probe "<Authorization header value>"
   curl -s -o /dev/null -w '%{http_code}\n' \
     -X POST "https://$MCP_HOST/http" \
     -H 'Content-Type: application/json' \
-    ${1:+-H "Authorization: $1"} "${@:2}" \
+    ${1:+-H "Authorization: $1"} \
     --data '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 }
 
-# 1. Positive — valid JWT succeeds (expect 200); then confirm a real read in your AI client:
-probe "Bearer $JWT"
-# 2. No token        → expect 401:
-probe ""
-# 3. Wrong issuer    → expect 401/403 (a well-formed JWT minted by a different issuer):
-probe "Bearer $WRONG_ISSUER_JWT"
-# 4. Wrong audience  → expect 401/403 (a cloudflared token for a DIFFERENT Access app):
-probe "Bearer $WRONG_AUD_JWT"
-# 5. Expired         → expect 401/403 (reuse $JWT after its exp; CF tokens are short-lived):
-probe "Bearer $EXPIRED_JWT"
-# 6. Tampered sig    → expect 401/403 (flip the last char of the signature segment):
-probe "Bearer $(printf '%s' "$JWT" | sed 's/.$/X/')"
+probe "Bearer $JWT"                              # 1. Positive → 200 (then confirm a real read in your AI client)
+probe ""                                         # 2. No token → 401
+probe "Bearer $WRONG_ISSUER_JWT"                 # 3. Wrong issuer → 401/403
+probe "Bearer $WRONG_AUD_JWT"                    # 4. Wrong audience → 401/403
+probe "Bearer $EXPIRED_JWT"                      # 5. Expired → 401/403
+probe "Bearer $(printf '%s' "$JWT" | sed 's/.$/X/')"   # 6. Tampered sig → 401/403
+# 7. ACL (only if AUTH_BUDGET_ACL covers >1 budget): from the AI client, a user mapped
+#    to budget A must NOT be able to read budget B.
+```
+
+**PowerShell:**
+```powershell
+function Probe([string]$Auth) {  # usage: Probe "Bearer <token>"  ('' for no token)
+  $headers = @{ 'Content-Type' = 'application/json' }
+  if ($Auth) { $headers['Authorization'] = $Auth }
+  try {
+    (Invoke-WebRequest -Uri "https://$MCP_HOST/http" -Method Post -Headers $headers `
+       -Body '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' -UseBasicParsing).StatusCode
+  } catch { $_.Exception.Response.StatusCode.value__ }   # 401/403 land here
+}
+
+Probe "Bearer $JWT"                              # 1. Positive → 200 (then confirm a real read in your AI client)
+Probe ""                                         # 2. No token → 401
+Probe "Bearer $WRONG_ISSUER_JWT"                 # 3. Wrong issuer → 401/403
+Probe "Bearer $WRONG_AUD_JWT"                    # 4. Wrong audience → 401/403
+Probe "Bearer $EXPIRED_JWT"                      # 5. Expired → 401/403
+Probe ("Bearer " + $JWT.Substring(0, $JWT.Length - 1) + "X")   # 6. Tampered sig → 401/403
 # 7. ACL (only if AUTH_BUDGET_ACL covers >1 budget): from the AI client, a user mapped
 #    to budget A must NOT be able to read budget B.
 ```
@@ -359,32 +397,43 @@ probe "Bearer $(printf '%s' "$JWT" | sed 's/.$/X/')"
 
 **7e. Write-path + rollback checks.**
 
+- **8. Write path — (AI client):** with the connector now on the JWT, add a $1 test
+  txn, confirm it in the Actual web app, then delete it — same smoke test as step 6.
+- **9. Bearer still works — (workstation):** set `$BEARER` / `BEARER` to the
+  `MCP_SSE_AUTHORIZATION` value from `mcp.env`, then confirm the legacy path still
+  authenticates while `AUTH_PROVIDER=oidc` (proves the cutover is reversible):
+
+**bash:** `probe "Bearer $BEARER"`   ·   **PowerShell:** `Probe "Bearer $BEARER"`
+
+**7f. Cut over (remove the Bearer token) once 1–9 pass.** Edit the file **(on the
+box)**, then re-verify **(workstation)**:
+
 ```bash
-# 8. Write path: from the AI client (now on the JWT), add a $1 test txn, confirm it
-#    in the Actual web app, then delete it — same smoke test as step 6.
-# 9. Rollback: temporarily present the Bearer token instead of the JWT and confirm it
-#    still works while AUTH_PROVIDER=oidc is being validated:
-probe "Bearer $(grep '^MCP_SSE_AUTHORIZATION=' mcp.env | cut -d= -f2)"
+# (on the box):
+ssh root@$IP "cd /opt/household-os/actual && sed -i '/^MCP_SSE_AUTHORIZATION=/d' mcp.env && docker compose up -d actual-mcp"
 ```
 
-**7f. Cut over (remove the Bearer token) once 1–9 pass.**
-
+**bash (workstation):**
 ```bash
-sed -i '/^MCP_SSE_AUTHORIZATION=/d' mcp.env       # remove the legacy shared secret
-docker compose up -d actual-mcp
 probe "Bearer $JWT"   # re-verify positive → 200
 probe ""              # re-verify no-token → 401
+```
+
+**PowerShell (workstation):**
+```powershell
+Probe "Bearer $JWT"   # re-verify positive → 200
+Probe ""              # re-verify no-token → 401
 ```
 
 Then update the connector to the JWT (and, if 7a is on, the `CF-Access-Client-Id` /
 `CF-Access-Client-Secret` headers), and flip **ADR-0003** Status → Accepted with
 today's date in `docs/decisions/0003-mcp-oidc-auth.md` and `docs/decisions/README.md`.
 
-**Rollback (if OIDC misbehaves at any point):** restore the Bearer line in `mcp.env`
-(`echo "MCP_SSE_AUTHORIZATION=<saved token>" >> mcp.env`), remove or comment the
-`AUTH_PROVIDER=oidc` line, `docker compose up -d actual-mcp`, and point the connector
-back at the Bearer header. If you enabled 7a and want it gone too, set
-`enable_mcp_access_service_token = false` and `terraform apply`.
+**Rollback (if OIDC misbehaves at any point) — (on the box):** restore the Bearer line
+in `mcp.env` (`echo "MCP_SSE_AUTHORIZATION=<saved token>" >> mcp.env`), remove or
+comment the `AUTH_PROVIDER=oidc` line, `docker compose up -d actual-mcp`, and point the
+connector back at the Bearer header. If you enabled 7a and want it gone too, set
+`enable_mcp_access_service_token = false` and `terraform apply` **(workstation)**.
 
 ---
 
