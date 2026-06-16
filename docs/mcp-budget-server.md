@@ -133,8 +133,10 @@ the Terraform comments and `var.enable_mcp_access_service_token`.
 
 ### OIDC cutover — acceptance criteria & sequence (ADR-0003)
 
-Run on the box with **both** Bearer and OIDC env present (defense in depth during
-transition). All must pass **before** removing `MCP_SSE_AUTHORIZATION`:
+This is the *what*; the executable step-by-step (commands, probes, rollback) is the
+**[OIDC cutover deployment runbook](#7-oidc-cutover--deployment-runbook-adr-0003)**
+(Deploy runbook §7). Run on the box with **both** Bearer and OIDC env present (defense
+in depth during transition). All must pass **before** removing `MCP_SSE_AUTHORIZATION`:
 
 1. **Positive:** a valid JWT (correct issuer + audience) succeeds on a read tool
    ("list accounts").
@@ -276,6 +278,113 @@ balances") before trying any write.
   write path *and* your ability to undo via Actual.
 - **Backups:** confirm the §5.1 weekly Actual export still runs — it's your
   recovery path for an unwanted AI write.
+
+### 7. OIDC cutover — deployment runbook (ADR-0003)
+
+Migrate the gate from the shared Bearer token to per-user OIDC. Run this **after**
+the Bearer deployment (steps 1–6) is live; it keeps Bearer working until OIDC is
+verified, so it is reversible at every step. Commands run in an SSH session on the
+box unless noted. `$IP` / `$MCP_HOST` come from `terraform output` (step 2).
+
+**7a. (optional) Stand up the Cloudflare Access service-token layer.** Skip if you
+are doing pure OIDC (path a). From `infra/terraform/` on your workstation:
+
+```bash
+# Enable the opt-in layer, then apply (adds 1 Access app + 1 service token on the MCP host):
+echo 'enable_mcp_access_service_token = true' >> terraform.tfvars
+terraform apply
+terraform output -raw mcp_access_service_token_client_id      # CF-Access-Client-Id
+terraform output -raw mcp_access_service_token_secret         # CF-Access-Client-Secret (store with the client)
+```
+
+**7b. Add the OIDC block to `mcp.env` (keep the Bearer token set).**
+
+```bash
+ssh root@$IP
+cd /opt/household-os/actual
+cat >> mcp.env <<'OIDC'
+AUTH_PROVIDER=oidc
+OIDC_ISSUER=https://<your-team>.cloudflareaccess.com
+OIDC_RESOURCE=<expected-jwt-aud>
+OIDC_SCOPES=
+AUTH_BUDGET_ACL={"you@gmail.com":["<budget-sync-id>"]}
+OIDC
+nano mcp.env          # fill the three <...> placeholders; leave MCP_SSE_AUTHORIZATION in place
+docker compose up -d actual-mcp
+docker compose logs --tail=40 actual-mcp   # should report OIDC/JWKS init, no errors
+```
+
+**7c. Obtain a valid JWT for testing** (path a). On your workstation, using
+`cloudflared` against the MCP host's Access app (its AUD must equal `OIDC_RESOURCE`):
+
+```bash
+cloudflared access login  https://$MCP_HOST
+JWT=$(cloudflared access token --app=https://$MCP_HOST)   # short-lived, issuer-minted
+```
+
+**7d. Run the acceptance criteria.** This probe POSTs a standard MCP `tools/list`
+(gated by the auth layer, so HTTP status cleanly proves accept/reject) and prints the
+status code:
+
+```bash
+probe() {  # usage: probe "<Authorization header value>" [extra curl args...]
+  curl -s -o /dev/null -w '%{http_code}\n' \
+    -X POST "https://$MCP_HOST/http" \
+    -H 'Content-Type: application/json' \
+    ${1:+-H "Authorization: $1"} "${@:2}" \
+    --data '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+}
+
+# 1. Positive — valid JWT succeeds (expect 200); then confirm a real read in your AI client:
+probe "Bearer $JWT"
+# 2. No token        → expect 401:
+probe ""
+# 3. Wrong issuer    → expect 401/403 (a well-formed JWT minted by a different issuer):
+probe "Bearer $WRONG_ISSUER_JWT"
+# 4. Wrong audience  → expect 401/403 (a cloudflared token for a DIFFERENT Access app):
+probe "Bearer $WRONG_AUD_JWT"
+# 5. Expired         → expect 401/403 (reuse $JWT after its exp; CF tokens are short-lived):
+probe "Bearer $EXPIRED_JWT"
+# 6. Tampered sig    → expect 401/403 (flip the last char of the signature segment):
+probe "Bearer $(printf '%s' "$JWT" | sed 's/.$/X/')"
+# 7. ACL (only if AUTH_BUDGET_ACL covers >1 budget): from the AI client, a user mapped
+#    to budget A must NOT be able to read budget B.
+```
+
+> Tokens for tests 3–5 come from the issuer side: #3 sign any JWT with a non-CF key
+> (e.g. `https://accounts.google.com`), #4 a `cloudflared access token` for a second
+> Access app, #5 a captured `$JWT` reused past its expiry. All must be **rejected** —
+> especially #6: a tampered signature that is *accepted* means validation is cosmetic;
+> do **not** remove the Bearer token in that case (fall back per ADR-0003).
+
+**7e. Write-path + rollback checks.**
+
+```bash
+# 8. Write path: from the AI client (now on the JWT), add a $1 test txn, confirm it
+#    in the Actual web app, then delete it — same smoke test as step 6.
+# 9. Rollback: temporarily present the Bearer token instead of the JWT and confirm it
+#    still works while AUTH_PROVIDER=oidc is being validated:
+probe "Bearer $(grep '^MCP_SSE_AUTHORIZATION=' mcp.env | cut -d= -f2)"
+```
+
+**7f. Cut over (remove the Bearer token) once 1–9 pass.**
+
+```bash
+sed -i '/^MCP_SSE_AUTHORIZATION=/d' mcp.env       # remove the legacy shared secret
+docker compose up -d actual-mcp
+probe "Bearer $JWT"   # re-verify positive → 200
+probe ""              # re-verify no-token → 401
+```
+
+Then update the connector to the JWT (and, if 7a is on, the `CF-Access-Client-Id` /
+`CF-Access-Client-Secret` headers), and flip **ADR-0003** Status → Accepted with
+today's date in `docs/decisions/0003-mcp-oidc-auth.md` and `docs/decisions/README.md`.
+
+**Rollback (if OIDC misbehaves at any point):** restore the Bearer line in `mcp.env`
+(`echo "MCP_SSE_AUTHORIZATION=<saved token>" >> mcp.env`), remove or comment the
+`AUTH_PROVIDER=oidc` line, `docker compose up -d actual-mcp`, and point the connector
+back at the Bearer header. If you enabled 7a and want it gone too, set
+`enable_mcp_access_service_token = false` and `terraform apply`.
 
 ---
 
