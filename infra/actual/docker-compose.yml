@@ -68,6 +68,31 @@ services:
     volumes:
       - /mnt/data/college:/app/data
 
+  # Actual HTTP REST API sidecar (jhonderson/actual-http-api). Exposes the full
+  # @actual-app/api surface as REST+Swagger so the Hub backend (and any other REST
+  # client) can query budget data without embedding the Node library in-process.
+  # See docs/install-actual-http-api.md. Pin the version tag — it should match
+  # actual-server's release (26.x.x tracks Actual Budget 26.x.x).
+  actual-http-api:
+    image: jhonderson/actual-http-api:26.6.1
+    restart: unless-stopped
+    depends_on:
+      - actual-server
+    expose:
+      - "5007"
+    env_file:
+      - ./actual-http-api.env
+    environment:
+      # Talk to Actual over the internal network, not the public URL.
+      ACTUAL_SERVER_URL: "http://actual-server:5006"
+      PORT: "5007"
+      # Disable endpoints that rely on Actual internals — safer for a public endpoint.
+      EXPERIMENTAL_OPERATIONS_ENABLED: "false"
+    volumes:
+      # Own data dir, isolated from the MCP server's synced copy to avoid concurrent
+      # access to the same @actual-app/api dataDir from two processes.
+      - /mnt/data/actual-http-api:/app/data
+
   caddy:
     image: caddy:2
     restart: unless-stopped
@@ -75,6 +100,7 @@ services:
       - actual-server
       - actual-mcp
       - college-app
+      - actual-http-api
     ports:
       - "80:80"
       - "443:443"

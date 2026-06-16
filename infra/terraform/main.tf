@@ -1,7 +1,8 @@
 locals {
-  budget_host  = "${var.budget_subdomain}.${var.domain}"
-  mcp_host     = "${var.mcp_subdomain}.${var.domain}"
-  college_host = "college.${var.domain}"
+  budget_host     = "${var.budget_subdomain}.${var.domain}"
+  mcp_host        = "${var.mcp_subdomain}.${var.domain}"
+  college_host    = "college.${var.domain}"
+  actual_api_host = "${var.actual_api_subdomain}.${var.domain}"
 }
 
 # ---------------------------------------------------------------------------
@@ -322,6 +323,43 @@ resource "cloudflare_zero_trust_access_policy" "mcp_bypass" {
   include {
     everyone = true
   }
+}
+
+# ---------------------------------------------------------------------------
+# Edge: Actual HTTP REST API sidecar (jhonderson/actual-http-api).
+#
+# Same pattern as the MCP host above — Cloudflare-proxied for TLS + WAF, but
+# deliberately NO Cloudflare Access application. The gate is the API_KEY in
+# actual-http-api.env. See docs/install-actual-http-api.md for the threat model.
+# ---------------------------------------------------------------------------
+
+resource "cloudflare_record" "actual_api" {
+  zone_id = var.cloudflare_zone_id
+  name    = var.actual_api_subdomain
+  type    = "A"
+  content = hcloud_server.hub.ipv4_address
+  proxied = true
+  ttl     = 1
+}
+
+resource "tls_private_key" "actual_api_origin" {
+  algorithm = "RSA"
+  rsa_bits  = 2048
+}
+
+resource "tls_cert_request" "actual_api_origin" {
+  private_key_pem = tls_private_key.actual_api_origin.private_key_pem
+  subject {
+    common_name = local.actual_api_host
+  }
+  dns_names = [local.actual_api_host]
+}
+
+resource "cloudflare_origin_ca_certificate" "actual_api" {
+  csr                = tls_cert_request.actual_api_origin.cert_request_pem
+  hostnames          = [local.actual_api_host]
+  request_type       = "origin-rsa"
+  requested_validity = 5475 # 15 years
 }
 
 # ---------------------------------------------------------------------------

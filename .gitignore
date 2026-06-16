@@ -17,6 +17,9 @@ certs/
 # Filled-in MCP server secrets (Actual password, E2E key, Bearer token).
 mcp.env
 !mcp.env.example
+# Filled-in Actual HTTP API secrets (Actual password, E2E key, API key).
+actual-http-api.env
+!actual-http-api.env.example
 
 # ── Node (Hub backend / finance worker, Phase 2) ──
 node_modules/

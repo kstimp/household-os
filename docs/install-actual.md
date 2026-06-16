@@ -824,30 +824,26 @@ Two facts about Actual that affect everything:
 
 ## How the finance worker will connect (Phase 2 preview)
 
-When the Hub backend exists, it will run on the same VPS in a sibling Docker container,
-connecting to Actual **over the internal Docker network** (bypassing Cloudflare Access,
-which blocks non-browser clients):
+When the Hub backend exists, it will call the **Actual HTTP REST API sidecar**
+(`actual-http-api`) over the internal Docker network. The sidecar wraps `@actual-app/api`
+and exposes it as plain REST, so the Hub can be written in any language (Python/FastAPI)
+without embedding the Node library in-process. See `docs/install-actual-http-api.md` for
+the sidecar setup.
 
-```js
-// npm i @actual-app/api
-import * as api from '@actual-app/api';
+```python
+import httpx
 
-await api.init({
-  dataDir: '/mnt/data/hub/actual-cache',  // local synced copy on the durable volume
-  serverURL: 'http://actual-server:5006', // internal network — NOT the public URL
-  password: process.env.ACTUAL_PASSWORD,  // server password from Step 10a
-});
-
-await api.downloadBudget(process.env.ACTUAL_SYNC_ID, {
-  password: process.env.ACTUAL_E2E_PASSWORD,  // only if E2E encryption is on (Step 10c)
-});
-
-await api.sync();
-const june = await api.getBudgetMonth('2026-06');
-await api.shutdown();
+# Calls the sidecar over the internal Docker network — no Cloudflare Access in the way.
+resp = httpx.get(
+    f"http://actual-http-api:5007/v1/budgets/{SYNC_ID}/months/2026-06/categories",
+    headers={"X-Api-Key": API_KEY},
+    timeout=10,
+)
+categories = resp.json()["data"]
+overspent = [c for c in categories if c["balance"] < 0]
 ```
 
-Read-only: never call `setBudget*` mutators — the design forbids write-back to Actual.
+The Hub never calls write endpoints — the design forbids write-back to Actual.
 
 ---
 
