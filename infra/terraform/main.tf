@@ -187,6 +187,61 @@ resource "cloudflare_origin_ca_certificate" "mcp" {
 }
 
 # ---------------------------------------------------------------------------
+# OPT-IN (ADR-0003): Cloudflare Access SERVICE-TOKEN layer on the MCP host.
+#
+# All three resources below are gated on var.enable_mcp_access_service_token and
+# default OFF. They add a non-interactive Access application in front of the MCP
+# server's own Bearer/OIDC gate (defense in depth), accepting a service token.
+#
+#   ⚠️ READ THIS BEFORE ENABLING. This is a DELIBERATE, NARROW reversal of the
+#   ADR-0002 rule that the MCP host has NO Access app. It is NOT the failure the
+#   docs/mcp-budget-server.md troubleshooting table warns about: that failure is an
+#   *interactive* Access app bouncing non-browser MCP clients to the Google login
+#   page. Here the policy decision is `non_identity` and the only included rule is a
+#   SERVICE TOKEN — a client presenting the CF-Access-Client-Id / CF-Access-Client-
+#   Secret headers is admitted with NO browser redirect. There is no IdP/Google leg
+#   on this app, so it cannot bounce to a login page. Enable only after confirming
+#   your MCP client can attach those two headers (ADR-0003 client-capability unknown).
+#
+# The BUDGET host's Access app (above) is untouched — Actual stays on Google SSO.
+# ---------------------------------------------------------------------------
+
+resource "cloudflare_zero_trust_access_service_token" "mcp" {
+  count      = var.enable_mcp_access_service_token ? 1 : 0
+  account_id = var.cloudflare_account_id
+  name       = "Household OS — MCP budget (service token)"
+  # client_secret is shown ONLY on create/rotate; capture it from the
+  # mcp_access_service_token_secret output and store it with the client.
+}
+
+resource "cloudflare_zero_trust_access_application" "mcp" {
+  count            = var.enable_mcp_access_service_token ? 1 : 0
+  account_id       = var.cloudflare_account_id
+  name             = "Household OS — MCP budget (service token)"
+  domain           = local.mcp_host
+  type             = "self_hosted"
+  session_duration = var.access_session_duration
+
+  # Non-interactive endpoint: keep it out of the app launcher and DO NOT
+  # auto-redirect to an IdP — admission is by service token only, so there is
+  # no Google login leg that could bounce a non-browser MCP client.
+  app_launcher_visible = false
+}
+
+resource "cloudflare_zero_trust_access_policy" "mcp_service_token" {
+  count          = var.enable_mcp_access_service_token ? 1 : 0
+  account_id     = var.cloudflare_account_id
+  application_id = cloudflare_zero_trust_access_application.mcp[0].id
+  name           = "MCP service token"
+  precedence     = 1
+  decision       = "non_identity" # service-token auth: no interactive identity required
+
+  include {
+    service_token = [cloudflare_zero_trust_access_service_token.mcp[0].id]
+  }
+}
+
+# ---------------------------------------------------------------------------
 # Backups: R2 bucket for Litestream (Hub SQLite) + weekly Actual exports.
 # ---------------------------------------------------------------------------
 
