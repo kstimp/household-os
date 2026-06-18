@@ -777,6 +777,28 @@ roll back with the command it prints at the end (swap the `.bak.` directory back
 
 ---
 
+## Part 13 — OS security updates (automatic)
+
+`unattended-upgrades` is configured in cloud-init and requires no manual setup. It:
+
+- Installs Ubuntu security patches daily
+- Reboots automatically at **03:30 UTC** when a kernel update requires it — 30 minutes after the backup window, so containers restart cleanly under `restart: unless-stopped`
+
+To verify it's active on the server:
+
+```bash
+ssh root@$IP
+systemctl status unattended-upgrades
+# Should show: active (running)
+
+cat /var/log/unattended-upgrades/unattended-upgrades.log | tail -20
+# Shows recent patch activity
+```
+
+If you rebuild the server from scratch, this is wired in via cloud-init — no manual step needed.
+
+---
+
 ## What Actual actually is (read this if something seems wrong)
 
 Two facts about Actual that affect everything:
