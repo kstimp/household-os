@@ -17,6 +17,18 @@ packages:
   - containerd.io
   - docker-buildx-plugin
   - docker-compose-plugin
+  - unattended-upgrades
+
+# Enable automatic security patches and schedule reboots after the backup window.
+write_files:
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+  - path: /etc/apt/apt.conf.d/50unattended-upgrades-local
+    content: |
+      Unattended-Upgrade::Automatic-Reboot "true";
+      Unattended-Upgrade::Automatic-Reboot-Time "03:30";
 
 runcmd:
   - systemctl enable --now docker
