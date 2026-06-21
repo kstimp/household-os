@@ -797,6 +797,8 @@ cat /var/log/unattended-upgrades/unattended-upgrades.log | tail -20
 
 If you rebuild the server from scratch, this is wired in via cloud-init — no manual step needed.
 
+**Already have a running server?** See [`docs/runbook-os-updates.md`](runbook-os-updates.md) §1 for the one-time backfill steps. That runbook also covers manual updates, checking patch history, and troubleshooting.
+
 ---
 
 ## What Actual actually is (read this if something seems wrong)
