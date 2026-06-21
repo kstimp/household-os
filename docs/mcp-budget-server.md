@@ -70,39 +70,91 @@ password). It's the documented fallback if maintainer trust becomes a concern.
 ## Security model & threat model
 
 The budget host is gated by Cloudflare Access (Google SSO). **This host is not** —
-Access blocks non-browser MCP clients (install §10f). The gate here is the MCP
-server's own auth. Defense in depth, outermost to innermost:
+an interactive Access app blocks non-browser MCP clients (install §10f). The gate
+here is the MCP server's own auth. Defense in depth, outermost to innermost:
 
 1. **Cloudflare proxy (orange cloud).** Hides the origin IP, terminates public
    TLS, and provides WAF + rate-limiting in front of the token. (Terraform sets
-   `proxied = true` and creates an Origin cert; **no** Access app on this host.)
-2. **Bearer token (v1 gate).** A 256-bit shared secret (`openssl rand -hex 32`)
-   in `MCP_SSE_AUTHORIZATION`; clients send `Authorization: Bearer <token>`.
-3. **Network isolation.** The container is not published to the host (no `ports:`);
+   `proxied = true` and creates an Origin cert.)
+2. **The MCP server's own auth gate.** Either **per-user OIDC/JWT** (ADR-0003
+   target — `AUTH_PROVIDER=oidc`, JWKS-validated, per-user `AUTH_BUDGET_ACL`) or
+   the **legacy shared Bearer token** (`MCP_SSE_AUTHORIZATION`, 256-bit,
+   `openssl rand -hex 32`; clients send `Authorization: Bearer <token>`). See
+   "Auth" below — OIDC is the current target, Bearer the fallback.
+3. **(Optional) Cloudflare Access service token.** A non-interactive header gate
+   at the edge (`CF-Access-Client-Id` / `CF-Access-Client-Secret`) in front of (2),
+   added by `var.enable_mcp_access_service_token` (ADR-0003). Off by default.
+4. **Network isolation.** The container is not published to the host (no `ports:`);
    only Caddy reaches it, and its only outbound need is `actual-server`.
-4. **Secrets stay on the VPS** (`mcp.env`, gitignored), never on family laptops —
+5. **Secrets stay on the VPS** (`mcp.env`, gitignored), never on family laptops —
    consistent with design §4.4.
 
-**Residual risks (accepted in ADR-0002):** a write-capable financial endpoint is
-internet-reachable behind a *shared* token rather than per-person SSO; and
-third-party code holds the Actual password (and the E2E key if encryption is on).
+**Residual risks (accepted in ADR-0002, narrowed by ADR-0003):** a write-capable
+financial endpoint is internet-reachable; under the legacy Bearer token it sits
+behind a *shared, non-expiring* secret rather than per-person SSO (OIDC shrinks
+both the window and the scope); and third-party code holds the Actual password
+(and the E2E key if encryption is on).
 
-### Hardening upgrade — OIDC instead of a shared Bearer token
+### Auth: per-user OIDC (current target) — ADR-0003
 
-For per-user identity (and per-user budget ACLs), switch from the static token to
-OIDC/JWT in `mcp.env`:
+Per ADR-0003 the gate moves from the shared Bearer token to **per-user OIDC/JWT**,
+using **Cloudflare Access as the issuer** so the existing Google SSO + family
+allowlist are reused (no new always-on identity provider). The server validates the
+token's **signature + issuer + audience** against the issuer's JWKS — per-user `sub`,
+short expiry, an audit trail, and per-budget ACLs replace the anonymous shared token.
+
+Set in `mcp.env` (var names confirmed against agigante80/actual-mcp-server **v0.7.9**,
+`docs/guides/AI_CLIENT_SETUP.md` — they drifted from earlier drafts, note `OIDC_SCOPES`):
 
 ```
 AUTH_PROVIDER=oidc
-OIDC_ISSUER=https://<your-issuer>
-OIDC_RESOURCE=<expected-jwt-aud>
-AUTH_BUDGET_ACL=<user→budget map>
-# remove MCP_SSE_AUTHORIZATION once OIDC is in place
+OIDC_ISSUER=https://<your-team>.cloudflareaccess.com    # issuer; JWKS at <issuer>/cdn-cgi/access/certs
+OIDC_RESOURCE=<expected-jwt-aud>                         # must equal the JWT `aud` (CF Access AUD tag)
+OIDC_SCOPES=                                             # leave EMPTY for issuers with no `scope` claim (CF Access, Casdoor)
+AUTH_BUDGET_ACL={"you@gmail.com":["<budget-sync-id>"]}  # principal(email|sub|group:<name>) → [budget sync ids]; ["*"]=all
+# keep MCP_SSE_AUTHORIZATION set during the cutover; remove it only after OIDC verifies
 ```
 
-Optional extra layer: a Cloudflare Access **service token** in front (sends
-`CF-Access-Client-Id` / `CF-Access-Client-Secret` headers) — only if your MCP
-client can attach custom headers.
+**Interim / extra layer — Cloudflare Access service token.** If a given MCP client
+can't complete the OIDC flow but *can* attach custom headers, put the host behind a
+non-interactive Access **service token** as a defense-in-depth gate: set
+`enable_mcp_access_service_token = true` in Terraform, then have the client send
+`CF-Access-Client-Id` / `CF-Access-Client-Secret`. This is a deliberate, narrow
+reversal of ADR-0002's "no Access app on the MCP host" — and is **not** the
+misconfiguration the troubleshooting table warns about, because the Access policy is
+`non_identity` (service token only) and never redirects to a Google login page. See
+the Terraform comments and `var.enable_mcp_access_service_token`.
+
+> **Why this matters (supply-chain).** The OIDC validation is third-party,
+> ~19★ single-maintainer code holding the Actual password. Before removing the
+> Bearer token, run the OIDC acceptance criteria below — especially the
+> tampered-signature and wrong-issuer/audience negatives — to confirm validation
+> is real, not cosmetic. ADR-0003 gates the cutover on exactly these tests.
+
+### OIDC cutover — acceptance criteria & sequence (ADR-0003)
+
+This is the *what*; the executable step-by-step (commands, probes, rollback) is the
+**[OIDC cutover deployment runbook](#7-oidc-cutover--deployment-runbook-adr-0003)**
+(Deploy runbook §7). Run on the box with **both** Bearer and OIDC env present (defense
+in depth during transition). All must pass **before** removing `MCP_SSE_AUTHORIZATION`:
+
+1. **Positive:** a valid JWT (correct issuer + audience) succeeds on a read tool
+   ("list accounts").
+2. **No token → 401.**
+3. **Wrong issuer → rejected** (well-formed JWT from a different issuer).
+4. **Wrong audience → rejected** (valid issuer, wrong `aud`).
+5. **Expired → rejected** (proves expiry is checked).
+6. **Tampered signature → rejected** (proves signature validation is real — the key
+   supply-chain test).
+7. **ACL:** a user mapped to budget A cannot reach budget B (if `AUTH_BUDGET_ACL`
+   covers >1 budget).
+8. **Write path works** for an authorized user (add a $1 test txn, confirm in Actual,
+   delete — same smoke test as the deploy runbook).
+9. **Rollback verified:** re-enabling the Bearer path restores access (cutover is
+   reversible) before you commit to removing it.
+
+Then cut over: remove `MCP_SSE_AUTHORIZATION` → `docker compose up -d actual-mcp` →
+re-verify (1) positive and (2) no-token.
 
 ---
 
@@ -114,7 +166,10 @@ Prerequisite: Actual is up (install doc Parts 1–11), and you know your Actual
 ### 1. Provision the MCP host (Terraform)
 
 The Terraform in `infra/terraform/` already includes the `mcp-budget` DNS record
-and its Origin cert (no Access app — see ADR-0002). From `infra/terraform/`:
+and its Origin cert (no Access app by default — see ADR-0002). The optional ADR-0003
+service-token Access layer is off unless you set `enable_mcp_access_service_token =
+true` (then the plan also adds an Access app + service token on this host). From
+`infra/terraform/`:
 
 **bash:**
 ```bash
@@ -203,7 +258,13 @@ exit
 Add a **custom connector** in Claude.ai / Claude Desktop pointing at:
 
 - **URL:** `https://<mcp_host>/http`  (the `MCP_HTTP_PATH` default is `/http`)
-- **Auth header:** `Authorization: Bearer <the token from mcp.env>`
+- **Auth (legacy Bearer):** `Authorization: Bearer <the token from mcp.env>`
+- **Auth (OIDC target):** attach a JWT from the configured issuer (its `aud` must
+  match `OIDC_RESOURCE`) — see the "Auth: per-user OIDC" section and run the OIDC
+  acceptance criteria before retiring the Bearer token.
+- **(Optional) service-token headers:** if `enable_mcp_access_service_token` is on,
+  also send `CF-Access-Client-Id` / `CF-Access-Client-Secret` (from the
+  `mcp_access_service_token_*` Terraform outputs).
 
 Then verify with a read first ("list my accounts and this month's category
 balances") before trying any write.
@@ -218,13 +279,170 @@ balances") before trying any write.
 - **Backups:** confirm the §5.1 weekly Actual export still runs — it's your
   recovery path for an unwanted AI write.
 
+### 7. OIDC cutover — deployment runbook (ADR-0003)
+
+Migrate the gate from the shared Bearer token to per-user OIDC. Run this **after**
+the Bearer deployment (steps 1–6) is live; it keeps Bearer working until OIDC is
+verified, so it is reversible at every step. Steps below are tagged **(workstation)**
+— run on your local machine, bash + PowerShell shown — or **(on the box)** — run
+inside the SSH session on the Linux server (no PowerShell translation needed, same as
+steps 3–4). `$IP` / `$MCP_HOST` come from `terraform output` (step 2); re-assign them
+if your shell has lost them (PowerShell: `$MCP_HOST = (terraform output -raw mcp_host).Trim()`).
+
+**7a. (optional) Stand up the Cloudflare Access service-token layer — (workstation).**
+Skip if you are doing pure OIDC (path a). From `infra/terraform/` (adds 1 Access app
++ 1 service token on the MCP host):
+
+**bash:**
+```bash
+echo 'enable_mcp_access_service_token = true' >> terraform.tfvars
+terraform apply
+terraform output -raw mcp_access_service_token_client_id      # CF-Access-Client-Id
+terraform output -raw mcp_access_service_token_secret         # CF-Access-Client-Secret (store with the client)
+```
+
+**PowerShell:**
+```powershell
+Add-Content terraform.tfvars 'enable_mcp_access_service_token = true'
+terraform apply
+terraform output -raw mcp_access_service_token_client_id      # CF-Access-Client-Id
+terraform output -raw mcp_access_service_token_secret         # CF-Access-Client-Secret (store with the client)
+```
+
+**7b. Add the OIDC block to `mcp.env`, keeping the Bearer token set — (on the box).**
+
+```bash
+ssh root@$IP
+cd /opt/household-os/actual
+cat >> mcp.env <<'OIDC'
+AUTH_PROVIDER=oidc
+OIDC_ISSUER=https://<your-team>.cloudflareaccess.com
+OIDC_RESOURCE=<expected-jwt-aud>
+OIDC_SCOPES=
+AUTH_BUDGET_ACL={"you@gmail.com":["<budget-sync-id>"]}
+OIDC
+nano mcp.env          # fill the three <...> placeholders; leave MCP_SSE_AUTHORIZATION in place
+docker compose up -d actual-mcp
+docker compose logs --tail=40 actual-mcp   # should report OIDC/JWKS init, no errors
+exit
+```
+
+**7c. Obtain a valid JWT for testing — (workstation).** Use `cloudflared` against the
+MCP host's Access app (its AUD must equal `OIDC_RESOURCE`):
+
+**bash:**
+```bash
+cloudflared access login https://$MCP_HOST
+JWT=$(cloudflared access token --app=https://$MCP_HOST)   # short-lived, issuer-minted
+```
+
+**PowerShell:**
+```powershell
+cloudflared access login "https://$MCP_HOST"
+$JWT = cloudflared access token --app="https://$MCP_HOST"  # short-lived, issuer-minted
+```
+
+**7d. Run the acceptance criteria — (workstation).** Define a probe that POSTs a
+standard MCP `tools/list` (gated by the auth layer, so the HTTP status cleanly proves
+accept vs reject), then call it per test. If 7a is enabled, also send the
+`CF-Access-Client-Id` / `CF-Access-Client-Secret` headers (curl `-H`, or add them to
+the PowerShell `$headers` hashtable).
+
+**bash:**
+```bash
+probe() {  # usage: probe "<Authorization header value>"
+  curl -s -o /dev/null -w '%{http_code}\n' \
+    -X POST "https://$MCP_HOST/http" \
+    -H 'Content-Type: application/json' \
+    ${1:+-H "Authorization: $1"} \
+    --data '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+}
+
+probe "Bearer $JWT"                              # 1. Positive → 200 (then confirm a real read in your AI client)
+probe ""                                         # 2. No token → 401
+probe "Bearer $WRONG_ISSUER_JWT"                 # 3. Wrong issuer → 401/403
+probe "Bearer $WRONG_AUD_JWT"                    # 4. Wrong audience → 401/403
+probe "Bearer $EXPIRED_JWT"                      # 5. Expired → 401/403
+probe "Bearer $(printf '%s' "$JWT" | sed 's/.$/X/')"   # 6. Tampered sig → 401/403
+# 7. ACL (only if AUTH_BUDGET_ACL covers >1 budget): from the AI client, a user mapped
+#    to budget A must NOT be able to read budget B.
+```
+
+**PowerShell:**
+```powershell
+function Probe([string]$Auth) {  # usage: Probe "Bearer <token>"  ('' for no token)
+  $headers = @{ 'Content-Type' = 'application/json' }
+  if ($Auth) { $headers['Authorization'] = $Auth }
+  try {
+    (Invoke-WebRequest -Uri "https://$MCP_HOST/http" -Method Post -Headers $headers `
+       -Body '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' -UseBasicParsing).StatusCode
+  } catch { $_.Exception.Response.StatusCode.value__ }   # 401/403 land here
+}
+
+Probe "Bearer $JWT"                              # 1. Positive → 200 (then confirm a real read in your AI client)
+Probe ""                                         # 2. No token → 401
+Probe "Bearer $WRONG_ISSUER_JWT"                 # 3. Wrong issuer → 401/403
+Probe "Bearer $WRONG_AUD_JWT"                    # 4. Wrong audience → 401/403
+Probe "Bearer $EXPIRED_JWT"                      # 5. Expired → 401/403
+Probe ("Bearer " + $JWT.Substring(0, $JWT.Length - 1) + "X")   # 6. Tampered sig → 401/403
+# 7. ACL (only if AUTH_BUDGET_ACL covers >1 budget): from the AI client, a user mapped
+#    to budget A must NOT be able to read budget B.
+```
+
+> Tokens for tests 3–5 come from the issuer side: #3 sign any JWT with a non-CF key
+> (e.g. `https://accounts.google.com`), #4 a `cloudflared access token` for a second
+> Access app, #5 a captured `$JWT` reused past its expiry. All must be **rejected** —
+> especially #6: a tampered signature that is *accepted* means validation is cosmetic;
+> do **not** remove the Bearer token in that case (fall back per ADR-0003).
+
+**7e. Write-path + rollback checks.**
+
+- **8. Write path — (AI client):** with the connector now on the JWT, add a $1 test
+  txn, confirm it in the Actual web app, then delete it — same smoke test as step 6.
+- **9. Bearer still works — (workstation):** set `$BEARER` / `BEARER` to the
+  `MCP_SSE_AUTHORIZATION` value from `mcp.env`, then confirm the legacy path still
+  authenticates while `AUTH_PROVIDER=oidc` (proves the cutover is reversible):
+
+**bash:** `probe "Bearer $BEARER"`   ·   **PowerShell:** `Probe "Bearer $BEARER"`
+
+**7f. Cut over (remove the Bearer token) once 1–9 pass.** Edit the file **(on the
+box)**, then re-verify **(workstation)**:
+
+```bash
+# (on the box):
+ssh root@$IP "cd /opt/household-os/actual && sed -i '/^MCP_SSE_AUTHORIZATION=/d' mcp.env && docker compose up -d actual-mcp"
+```
+
+**bash (workstation):**
+```bash
+probe "Bearer $JWT"   # re-verify positive → 200
+probe ""              # re-verify no-token → 401
+```
+
+**PowerShell (workstation):**
+```powershell
+Probe "Bearer $JWT"   # re-verify positive → 200
+Probe ""              # re-verify no-token → 401
+```
+
+Then update the connector to the JWT (and, if 7a is on, the `CF-Access-Client-Id` /
+`CF-Access-Client-Secret` headers), and flip **ADR-0003** Status → Accepted with
+today's date in `docs/decisions/0003-mcp-oidc-auth.md` and `docs/decisions/README.md`.
+
+**Rollback (if OIDC misbehaves at any point) — (on the box):** restore the Bearer line
+in `mcp.env` (`echo "MCP_SSE_AUTHORIZATION=<saved token>" >> mcp.env`), remove or
+comment the `AUTH_PROVIDER=oidc` line, `docker compose up -d actual-mcp`, and point the
+connector back at the Bearer header. If you enabled 7a and want it gone too, set
+`enable_mcp_access_service_token = false` and `terraform apply` **(workstation)**.
+
 ---
 
 ## Operations
 
-- **Pin the image.** The compose currently tracks `:latest`; once you've verified
-  a version, pin the tag (e.g. `:v0.7.3`) so an upstream change can't surprise a
-  process holding your financial credentials.
+- **Pin the image.** The compose pins `actual-mcp` to `:v0.7.9` (off `:latest`) so
+  an upstream change can't surprise a process holding your financial credentials —
+  this is also the tag whose `docs/guides/AI_CLIENT_SETUP.md` defines the OIDC env
+  vars above. Bump the tag deliberately and re-run the smoke + auth tests after.
 - **Rotate the token** by editing `mcp.env` and `docker compose up -d actual-mcp`;
   update the connector. Do this if a device with the token is lost.
 - **Logs:** `docker compose logs -f actual-mcp`. Set `MCP_BRIDGE_STORE_LOGS=true`

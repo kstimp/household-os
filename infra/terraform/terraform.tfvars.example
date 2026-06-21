@@ -22,3 +22,9 @@ admin_ip_cidr        = "203.0.113.4/32"
 # location       = "ash"     # ash = US East, hil = US West, nbg1/fsn1/hel1 = EU
 # volume_size_gb = 20
 # access_session_duration = "730h"  # Access re-login interval; 1 month default, "24h" for daily
+
+# ADR-0003 interim service-token layer on the MCP host. OFF by default. Setting
+# this true adds a Cloudflare Access app that accepts a SERVICE TOKEN (non-identity)
+# in front of the MCP gate — a deliberate, narrow reversal of ADR-0002. Enable only
+# after confirming your MCP client can send CF-Access-Client-Id/Secret headers.
+# enable_mcp_access_service_token = false

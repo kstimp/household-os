@@ -140,37 +140,49 @@ above, points squarely at reusing the Cloudflare/Google identity already in plac
 
 ## Implementation appendix (for the build session)
 
-> This is design-stage. Nothing below is applied yet. Confirm current upstream
-> env-var names against the agigante80/actual-mcp-server release you pin —
-> the names here come from `docs/mcp-budget-server.md` and may have changed.
+> **Status of this appendix:** the repo-side changes below are now **applied** in
+> infra + docs (image pinned, OIDC env block, optional service-token Terraform).
+> What remains is the **live cutover** on the VPS — running the acceptance criteria
+> against the running server, then removing `MCP_SSE_AUTHORIZATION`. The ADR Status
+> stays **Proposed** until that cutover runs (then flip to Accepted, dated).
 
-### Pre-work / unknowns to resolve first
+### Pre-work / unknowns — resolved
 
-1. **Pin and read the upstream release.** Choose a specific tag (not `:latest`),
-   read its auth docs/source, and confirm the exact OIDC env-var names and that it
-   **validates issuer + audience + signature** (JWKS fetched from the issuer), not
-   just "a bearer string is present."
-2. **Confirm Cloudflare Access can issue an OIDC token the MCP client can use.**
-   Decide the concrete flow: (a) Cloudflare Access *as IdP/OIDC provider* issuing
-   JWTs the server validates against CF's issuer + JWKS, vs (b) the simpler
-   **service-token** header layer. If (a) is not cleanly supported by the client,
-   ship (b) first and treat true per-user OIDC as a follow-up.
-3. **Confirm whether the MCP client (Claude.ai / Desktop connector) can perform an
-   OIDC flow or only attach static headers.** This determines (a) vs (b).
+1. **Pinned + read the upstream release.** Pinned `ghcr.io/agigante80/actual-mcp-server:v0.7.9`
+   (off `:latest`). Confirmed against its `docs/guides/AI_CLIENT_SETUP.md` that
+   `AUTH_PROVIDER=oidc` fetches the issuer's **JWKS** and validates **signature +
+   issuer + audience** on every request — not just "a bearer string is present."
+   The env-var names drifted from the draft below: there is also an **`OIDC_SCOPES`**
+   var (must be empty for issuers, incl. Cloudflare Access and Casdoor, whose tokens
+   carry no `scope` claim), and `AUTH_BUDGET_ACL` is a **JSON object** mapping a
+   principal (`email` | `sub` | `group:<name>`) to a list of budget sync IDs
+   (`["*"]` = all budgets).
+2. **Issuer flow.** Both paths are wired so the operator can pick at deploy time:
+   (a) Cloudflare Access as OIDC issuer — `OIDC_ISSUER=https://<team>.cloudflareaccess.com`,
+   JWKS at `/cdn-cgi/access/certs`, `OIDC_RESOURCE` = the Access app's AUD tag; and
+   (b) the **service-token** header layer, now available behind
+   `var.enable_mcp_access_service_token` (default off). Per the rule below, if the
+   client can't do (a), ship (b) first.
+3. **Client capability.** Upstream docs reference Casdoor and make **no mention of
+   Cloudflare Access**, and the Claude connector's ability to complete CF Access's
+   browser OIDC flow could not be verified offline. So (b) is provided as the
+   deployable interim gate and true per-user OIDC (a) is the follow-up — exactly the
+   fallback this ADR's pre-work prescribes.
 
 ### Target config — `infra/actual/mcp.env` (OIDC path)
 
 ```
 AUTH_PROVIDER=oidc
-OIDC_ISSUER=https://<your-team>.cloudflareaccess.com      # or chosen issuer
-OIDC_RESOURCE=<expected-jwt-aud>                          # audience the server enforces
-AUTH_BUDGET_ACL=<user-email-or-sub → budget-syncid map>  # per-user scoping
+OIDC_ISSUER=https://<your-team>.cloudflareaccess.com      # or chosen issuer; JWKS at <issuer>/cdn-cgi/access/certs
+OIDC_RESOURCE=<expected-jwt-aud>                          # audience the server enforces (CF Access AUD tag)
+OIDC_SCOPES=                                              # leave EMPTY for issuers with no `scope` claim (CF Access, Casdoor)
+AUTH_BUDGET_ACL={"you@gmail.com":["<budget-sync-id>"]}   # JSON: principal(email|sub|group:<name>) → [budget sync ids]; ["*"]=all
 # Keep MCP_SSE_AUTHORIZATION set during transition; REMOVE only after OIDC verified
 # ACTUAL_PASSWORD / ACTUAL_BUDGET_SYNC_ID / ACTUAL_BUDGET_PASSWORD unchanged
 ```
 
-Also update `infra/actual/mcp.env.example` with the OIDC block (commented) and a
-note that Bearer and OIDC are mutually exclusive end-states.
+`infra/actual/mcp.env.example` now carries this OIDC block (commented) alongside the
+Bearer var, with a note that Bearer and OIDC are mutually exclusive end-states.
 
 ### Interim defense-in-depth — Cloudflare Access service token
 

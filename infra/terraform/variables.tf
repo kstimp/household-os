@@ -43,14 +43,35 @@ variable "mcp_subdomain" {
   description = <<-EOT
     Subdomain the AI-facing MCP budget server is served at (ADR-0002). Final host =
     <mcp_subdomain>.<domain>. NOTE: unlike the budget host, this one is deliberately
-    NOT behind Cloudflare Access — the gate is the MCP server's own Bearer/OIDC auth,
-    because an MCP client is a non-browser client that Access would block.
+    NOT behind an interactive Cloudflare Access app — the gate is the MCP server's own
+    Bearer/OIDC auth, because an MCP client is a non-browser client that an interactive
+    Access app would block. (An optional non-interactive SERVICE-TOKEN Access layer can
+    be turned on via var.enable_mcp_access_service_token — ADR-0003.)
   EOT
   type        = string
   default     = "mcp-budget"
 }
 
 # ---- Access control -------------------------------------------------------
+
+variable "enable_mcp_access_service_token" {
+  description = <<-EOT
+    OPT-IN (ADR-0003): put the MCP host behind a Cloudflare Access application that
+    accepts a non-identity SERVICE TOKEN as a defense-in-depth layer in front of the
+    MCP server's own Bearer/OIDC gate. This is a DELIBERATE, NARROW reversal of
+    ADR-0002's "no Access app on the MCP host" rule — and is NOT the misconfiguration
+    the docs/mcp-budget-server.md troubleshooting table warns about (an interactive
+    Access app that bounces non-browser clients to the Google login page). The policy
+    here is `non_identity` + service token, so a client sending the CF-Access-Client-Id
+    / CF-Access-Client-Secret headers is admitted with NO browser redirect.
+
+    Leave false until you have confirmed your MCP client (Claude.ai / Desktop
+    connector) can attach those two custom headers; otherwise enabling this will block
+    a client that cannot. The budget host's Access app is unaffected either way.
+  EOT
+  type        = bool
+  default     = false
+}
 
 variable "family_emails" {
   description = "Allowlisted Google account emails that may reach Actual via Cloudflare Access."

@@ -28,7 +28,11 @@ services:
   # non-browser client Access would otherwise block). Its own Bearer/OIDC token is
   # the gate. Secrets come from mcp.env (gitignored; copy from mcp.env.example).
   actual-mcp:
-    image: ghcr.io/agigante80/actual-mcp-server:latest
+    # Pinned off :latest so an upstream change can't surprise a process holding
+    # the Actual credentials (ADR-0002 supply-chain note; ADR-0003 pre-work). This
+    # tag's docs/guides/AI_CLIENT_SETUP.md is the reference for the OIDC env vars
+    # in mcp.env.example. Bump deliberately, then re-run the smoke + auth tests.
+    image: ghcr.io/agigante80/actual-mcp-server:v0.7.9
     restart: unless-stopped
     depends_on:
       - actual-server

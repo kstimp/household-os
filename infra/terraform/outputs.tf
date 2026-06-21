@@ -47,6 +47,25 @@ output "mcp_origin_key_pem" {
   sensitive   = true
 }
 
+output "mcp_access_service_token_client_id" {
+  description = <<-EOT
+    Cloudflare Access service-token Client ID for the MCP host. Empty unless
+    var.enable_mcp_access_service_token is true (ADR-0003 interim layer). The MCP
+    client sends this as the CF-Access-Client-Id header.
+  EOT
+  value       = one(cloudflare_zero_trust_access_service_token.mcp[*].client_id)
+}
+
+output "mcp_access_service_token_secret" {
+  description = <<-EOT
+    Cloudflare Access service-token Client Secret for the MCP host (CF-Access-Client-Secret
+    header). Shown only on create/rotate; store it with the client. Empty unless
+    var.enable_mcp_access_service_token is true.
+  EOT
+  value       = one(cloudflare_zero_trust_access_service_token.mcp[*].client_secret)
+  sensitive   = true
+}
+
 output "r2_bucket" {
   description = "Backup bucket name for Litestream + weekly Actual exports."
   value       = cloudflare_r2_bucket.backups.name
