@@ -113,8 +113,8 @@ Set in `mcp.env` (var names from agigante80/actual-mcp-server v0.7.11 `docs/CONF
 ```
 AUTH_PROVIDER=oidc
 OIDC_ISSUER=https://accounts.google.com             # JWKS at https://www.googleapis.com/oauth2/v3/certs
-OIDC_RESOURCE=<google-oauth-client-id>              # Google ID token `aud` = your OAuth client ID
-OIDC_ACCEPTED_AUDIENCES=<google-oauth-client-id>   # repeat client ID here (both form the accepted aud set)
+OIDC_RESOURCE=https://<google-oauth-client-id>      # must be a valid URI (mcp-auth validates this); add https:// prefix
+OIDC_ACCEPTED_AUDIENCES=<google-oauth-client-id>   # bare client ID — must match `aud` claim in Google ID tokens (no https://)
 OIDC_SCOPES=openid email                            # NOT empty — Google emits the `scope` claim
 AUTH_BUDGET_ACL={"you@gmail.com":["<budget-sync-id>"]}  # principal(email|sub|group:<name>) → [sync ids]; ["*"]=all
 # keep MCP_SSE_AUTHORIZATION set during the cutover; remove it only after OIDC verifies
@@ -378,12 +378,12 @@ cd /opt/household-os/actual
 cat >> mcp.env <<'OIDC'
 AUTH_PROVIDER=oidc
 OIDC_ISSUER=https://accounts.google.com
-OIDC_RESOURCE=<google-oauth-client-id>
+OIDC_RESOURCE=https://<google-oauth-client-id>
 OIDC_ACCEPTED_AUDIENCES=<google-oauth-client-id>
 OIDC_SCOPES=openid email
 AUTH_BUDGET_ACL={"you@gmail.com":["<budget-sync-id>"]}
 OIDC
-nano mcp.env          # fill the <...> placeholders; leave MCP_SSE_AUTHORIZATION in place
+nano mcp.env          # fill the <...> placeholders; OIDC_RESOURCE needs https:// prefix; leave MCP_SSE_AUTHORIZATION in place
 docker compose up -d actual-mcp
 docker compose logs --tail=40 actual-mcp   # should report OIDC/JWKS init with Google issuer, no errors
 exit
