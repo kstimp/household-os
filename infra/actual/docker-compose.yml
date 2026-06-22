@@ -28,11 +28,13 @@ services:
   # non-browser client Access would otherwise block). Its own Bearer/OIDC token is
   # the gate. Secrets come from mcp.env (gitignored; copy from mcp.env.example).
   actual-mcp:
-    # Pinned to a semver release (ADR-0002 supply-chain note; ADR-0004). v0.7.11 is
-    # the first release with OIDC support on `main` (AUTH_PROVIDER=oidc, Google issuer,
-    # etc.). The earlier :develop workaround is no longer needed. Bump deliberately
-    # after reading release notes, then re-run the smoke + auth tests.
-    image: ghcr.io/agigante80/actual-mcp-server:v0.7.11
+    # Pinned to :develop (ADR-0002 supply-chain note; ADR-0004). The project's GHCR
+    # registry publishes latest/develop and SHA-pinned digests (latest-<sha>,
+    # development-<sha>); stable semver tags use 0.x.x format and top out at 0.4.2,
+    # which predates OIDC support. OIDC is confirmed only on the develop track.
+    # Revisit when a stable release that includes OIDC is published; pin to the
+    # 0.x.x semver tag or a latest-<sha> digest at that point.
+    image: ghcr.io/agigante80/actual-mcp-server:develop
     restart: unless-stopped
     depends_on:
       - actual-server
