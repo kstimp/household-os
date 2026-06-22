@@ -29,6 +29,12 @@ resource "hcloud_server" "hub" {
     project = "household-os"
     role    = "hub"
   }
+
+  # cloud-init runs only at first boot; ignore drift in user_data so Terraform
+  # doesn't force-replace the live server when cloud-init.yaml is updated.
+  lifecycle {
+    ignore_changes = [user_data]
+  }
 }
 
 resource "hcloud_volume" "data" {
@@ -238,6 +244,24 @@ resource "cloudflare_zero_trust_access_policy" "mcp_service_token" {
 
   include {
     service_token = [cloudflare_zero_trust_access_service_token.mcp[0].id]
+  }
+}
+
+# Bypass policy: allows all traffic through at the CF edge so non-browser MCP
+# clients (e.g. Claude connector, which can't send service-token headers) are
+# not blocked. The real auth gate is the MCP server's own Bearer/OIDC check.
+# The app is kept alive so its AUD remains valid for OIDC JWT validation via
+# `cloudflared access token`.
+resource "cloudflare_zero_trust_access_policy" "mcp_bypass" {
+  count          = var.enable_mcp_access_service_token ? 1 : 0
+  account_id     = var.cloudflare_account_id
+  application_id = cloudflare_zero_trust_access_application.mcp[0].id
+  name           = "MCP bypass (edge passthrough)"
+  precedence     = 2
+  decision       = "bypass"
+
+  include {
+    everyone = true
   }
 }
 

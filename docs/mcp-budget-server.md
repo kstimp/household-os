@@ -76,11 +76,11 @@ here is the MCP server's own auth. Defense in depth, outermost to innermost:
 1. **Cloudflare proxy (orange cloud).** Hides the origin IP, terminates public
    TLS, and provides WAF + rate-limiting in front of the token. (Terraform sets
    `proxied = true` and creates an Origin cert.)
-2. **The MCP server's own auth gate.** Either **per-user OIDC/JWT** (ADR-0003
-   target — `AUTH_PROVIDER=oidc`, JWKS-validated, per-user `AUTH_BUDGET_ACL`) or
-   the **legacy shared Bearer token** (`MCP_SSE_AUTHORIZATION`, 256-bit,
-   `openssl rand -hex 32`; clients send `Authorization: Bearer <token>`). See
-   "Auth" below — OIDC is the current target, Bearer the fallback.
+2. **The MCP server's own auth gate — per-user Google OIDC/JWT** (ADR-0004).
+   `AUTH_PROVIDER=oidc`, `OIDC_ISSUER=https://accounts.google.com`, JWKS-validated,
+   per-email `AUTH_BUDGET_ACL`. All clients authenticate via Google OAuth 2.1 PKCE.
+   The interim Bearer token (`MCP_SSE_AUTHORIZATION`) is kept set until OIDC is
+   verified end-to-end, then removed (see "Auth" and §7 below).
 3. **(Optional) Cloudflare Access service token.** A non-interactive header gate
    at the edge (`CF-Access-Client-Id` / `CF-Access-Client-Secret`) in front of (2),
    added by `var.enable_mcp_access_service_token` (ADR-0003). Off by default.
@@ -89,72 +89,74 @@ here is the MCP server's own auth. Defense in depth, outermost to innermost:
 5. **Secrets stay on the VPS** (`mcp.env`, gitignored), never on family laptops —
    consistent with design §4.4.
 
-**Residual risks (accepted in ADR-0002, narrowed by ADR-0003):** a write-capable
-financial endpoint is internet-reachable; under the legacy Bearer token it sits
-behind a *shared, non-expiring* secret rather than per-person SSO (OIDC shrinks
-both the window and the scope); and third-party code holds the Actual password
-(and the E2E key if encryption is on).
+**Residual risks (accepted in ADR-0002, narrowed by ADR-0004):** a write-capable
+financial endpoint is internet-reachable; third-party code holds the Actual password
+(and the E2E key if encryption is on). Under OIDC (ADR-0004), per-user Google identity
++ short-lived tokens + `AUTH_BUDGET_ACL` replace the anonymous shared Bearer token.
+Residual: the family allowlist now lives in two places (CF Access for Actual, `AUTH_BUDGET_ACL`
+for MCP) — keep them in sync when adding users.
 
-### Auth: per-user OIDC (current target) — ADR-0003
+### Auth: per-user Google OIDC/JWT — ADR-0004
 
-Per ADR-0003 the gate moves from the shared Bearer token to **per-user OIDC/JWT**,
-using **Cloudflare Access as the issuer** so the existing Google SSO + family
-allowlist are reused (no new always-on identity provider). The server validates the
-token's **signature + issuer + audience** against the issuer's JWKS — per-user `sub`,
-short expiry, an audit trail, and per-budget ACLs replace the anonymous shared token.
+The gate is **per-user Google OAuth 2.0 / OIDC**, using
+**`OIDC_ISSUER=https://accounts.google.com`** so the existing Google identities (already
+used in CF Zero Trust) are the authoritative identity source — no new always-on identity
+provider. The server validates every request's JWT against Google's JWKS: signature +
+issuer + audience on every call. Per-email `AUTH_BUDGET_ACL` replaces the anonymous
+shared token with per-user scoping.
 
-Set in `mcp.env` (var names confirmed against agigante80/actual-mcp-server **v0.7.9**,
-`docs/guides/AI_CLIENT_SETUP.md` — they drifted from earlier drafts, note `OIDC_SCOPES`):
+(CF Access as the OIDC issuer was attempted in ADR-0003 and found permanently unworkable.
+Google resolves all three blockers from that attempt — see ADR-0003 for details.)
+
+Set in `mcp.env` (var names from agigante80/actual-mcp-server v0.7.11 `docs/CONFIGURATION.md`):
 
 ```
 AUTH_PROVIDER=oidc
-OIDC_ISSUER=https://<your-team>.cloudflareaccess.com    # issuer; JWKS at <issuer>/cdn-cgi/access/certs
-OIDC_RESOURCE=<expected-jwt-aud>                         # must equal the JWT `aud` (CF Access AUD tag)
-OIDC_SCOPES=                                             # leave EMPTY for issuers with no `scope` claim (CF Access, Casdoor)
-AUTH_BUDGET_ACL={"you@gmail.com":["<budget-sync-id>"]}  # principal(email|sub|group:<name>) → [budget sync ids]; ["*"]=all
+OIDC_ISSUER=https://accounts.google.com             # JWKS at https://www.googleapis.com/oauth2/v3/certs
+OIDC_RESOURCE=<google-oauth-client-id>              # Google ID token `aud` = your OAuth client ID
+OIDC_ACCEPTED_AUDIENCES=<google-oauth-client-id>   # repeat client ID here (both form the accepted aud set)
+OIDC_SCOPES=openid email                            # NOT empty — Google emits the `scope` claim
+AUTH_BUDGET_ACL={"you@gmail.com":["<budget-sync-id>"]}  # principal(email|sub|group:<name>) → [sync ids]; ["*"]=all
 # keep MCP_SSE_AUTHORIZATION set during the cutover; remove it only after OIDC verifies
 ```
 
-**Interim / extra layer — Cloudflare Access service token.** If a given MCP client
-can't complete the OIDC flow but *can* attach custom headers, put the host behind a
-non-interactive Access **service token** as a defense-in-depth gate: set
-`enable_mcp_access_service_token = true` in Terraform, then have the client send
-`CF-Access-Client-Id` / `CF-Access-Client-Secret`. This is a deliberate, narrow
-reversal of ADR-0002's "no Access app on the MCP host" — and is **not** the
-misconfiguration the troubleshooting table warns about, because the Access policy is
-`non_identity` (service token only) and never redirects to a Google login page. See
-the Terraform comments and `var.enable_mcp_access_service_token`.
+> **`AUTH_PROVIDER=oidc` is a hard flip.** Setting it completely disables the Bearer
+> token server-wide — there is no dual-auth mode. All clients must complete the Google
+> OAuth flow once this is set. Keep `MCP_SSE_AUTHORIZATION` in `mcp.env` (but NOT in the
+> env as `AUTH_PROVIDER=oidc` disables it) until OIDC is verified end-to-end.
 
-> **Why this matters (supply-chain).** The OIDC validation is third-party,
-> ~19★ single-maintainer code holding the Actual password. Before removing the
-> Bearer token, run the OIDC acceptance criteria below — especially the
-> tampered-signature and wrong-issuer/audience negatives — to confirm validation
-> is real, not cosmetic. ADR-0003 gates the cutover on exactly these tests.
+> **Supply-chain note.** Before removing the Bearer token, run the OIDC acceptance
+> criteria (§7d) — especially the tampered-signature and wrong-issuer/audience negatives —
+> to confirm JWT validation is real, not cosmetic.
 
-### OIDC cutover — acceptance criteria & sequence (ADR-0003)
+### OIDC cutover — acceptance criteria & sequence (ADR-0004)
 
 This is the *what*; the executable step-by-step (commands, probes, rollback) is the
-**[OIDC cutover deployment runbook](#7-oidc-cutover--deployment-runbook-adr-0003)**
-(Deploy runbook §7). Run on the box with **both** Bearer and OIDC env present (defense
-in depth during transition). All must pass **before** removing `MCP_SSE_AUTHORIZATION`:
+**[OIDC cutover deployment runbook](#7-oidc-cutover--deployment-runbook-adr-0004)**
+(Deploy runbook §7). Run with **both** Bearer and OIDC env vars present in `mcp.env`
+but `AUTH_PROVIDER=oidc` active (Bearer is disabled server-side). All must pass
+**before** removing `MCP_SSE_AUTHORIZATION` from `mcp.env`:
 
-1. **Positive:** a valid JWT (correct issuer + audience) succeeds on a read tool
-   ("list accounts").
+1. **Positive (Google ID token):** a valid Google ID token from the configured OAuth
+   client succeeds on a read tool ("list accounts"). *(Gating test — if this returns 401
+   with a JWT parse error in the logs, Claude is sending an opaque access token instead
+   of the JWT ID token; see ADR-0004 Consequences.)*
 2. **No token → 401.**
-3. **Wrong issuer → rejected** (well-formed JWT from a different issuer).
-4. **Wrong audience → rejected** (valid issuer, wrong `aud`).
+3. **Wrong issuer → rejected** (well-formed JWT from a different issuer, e.g. a
+   self-signed token).
+4. **Wrong audience → rejected** (Google ID token with a different client ID in `aud`).
 5. **Expired → rejected** (proves expiry is checked).
 6. **Tampered signature → rejected** (proves signature validation is real — the key
    supply-chain test).
-7. **ACL:** a user mapped to budget A cannot reach budget B (if `AUTH_BUDGET_ACL`
-   covers >1 budget).
+7. **ACL: unauthorized email → 403** (user whose email is not in `AUTH_BUDGET_ACL`).
 8. **Write path works** for an authorized user (add a $1 test txn, confirm in Actual,
    delete — same smoke test as the deploy runbook).
-9. **Rollback verified:** re-enabling the Bearer path restores access (cutover is
-   reversible) before you commit to removing it.
+9. **Hard flip confirmed:** the old `MCP_SSE_AUTHORIZATION` Bearer value → 401 (proves
+   the Bearer path is disabled once `AUTH_PROVIDER=oidc` is set; cutover is not
+   reversible by env-var toggle alone — see rollback in §7f).
 
-Then cut over: remove `MCP_SSE_AUTHORIZATION` → `docker compose up -d actual-mcp` →
-re-verify (1) positive and (2) no-token.
+Then cut over: remove `MCP_SSE_AUTHORIZATION` from `mcp.env` →
+`docker compose up -d actual-mcp` → re-verify (1) positive and (2) no-token.
 
 ---
 
@@ -255,16 +257,78 @@ exit
 
 ### 5. Connect your AI client
 
-Add a **custom connector** in Claude.ai / Claude Desktop pointing at:
+The MCP endpoint is `https://<mcp_host>/http` (the default `MCP_HTTP_PATH` is `/http`).
+All three clients authenticate via **Google OAuth 2.0** using the credentials from your
+Google Cloud Console OAuth client (see §7a for how to create it). Because
+`AUTH_PROVIDER=oidc` disables Bearer server-wide, there is no static-token option once
+OIDC is active — all clients must complete the Google OAuth flow.
 
-- **URL:** `https://<mcp_host>/http`  (the `MCP_HTTP_PATH` default is `/http`)
-- **Auth (legacy Bearer):** `Authorization: Bearer <the token from mcp.env>`
-- **Auth (OIDC target):** attach a JWT from the configured issuer (its `aud` must
-  match `OIDC_RESOURCE`) — see the "Auth: per-user OIDC" section and run the OIDC
-  acceptance criteria before retiring the Bearer token.
-- **(Optional) service-token headers:** if `enable_mcp_access_service_token` is on,
-  also send `CF-Access-Client-Id` / `CF-Access-Client-Secret` (from the
-  `mcp_access_service_token_*` Terraform outputs).
+#### Claude.ai web (syncs automatically to Claude mobile)
+
+Settings → Integrations → Add custom integration → Advanced Settings:
+
+- **Name:** Budget
+- **URL:** `https://<mcp_host>/http`
+- **Authorization URL:** `https://accounts.google.com/o/oauth2/v2/auth`
+- **Token URL:** `https://oauth2.googleapis.com/token`
+- **Client ID:** `<google-oauth-client-id>`
+- **Client Secret:** `<google-oauth-client-secret>`
+- **Scopes:** `openid email`
+
+The connector syncs automatically to the Claude iOS/Android app. Verify with "list
+my accounts and this month's balances."
+
+> **Known issue (claude.ai bug #46140):** The OAuth flow may complete but the token
+> is not forwarded to the MCP server on some requests. Check if the issue is resolved
+> before relying on this; retry the auth flow if requests return 401 unexpectedly.
+
+#### Claude Desktop
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or
+`%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+```json
+{
+  "mcpServers": {
+    "budget": {
+      "url": "https://<mcp_host>/http",
+      "oauth": {
+        "clientId": "<google-oauth-client-id>",
+        "clientSecret": "<google-oauth-client-secret>",
+        "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
+        "tokenUrl": "https://oauth2.googleapis.com/token",
+        "scopes": ["openid", "email"]
+      }
+    }
+  }
+}
+```
+
+Restart Claude Desktop after saving. Verify with "list my accounts."
+
+> **Schema note:** Claude Desktop's remote-MCP config evolves. If the `oauth` key
+> structure above doesn't work, check the current format at docs.anthropic.com under
+> MCP → Connecting to remote servers.
+
+#### Claude Code
+
+```bash
+claude mcp add budget --transport http "https://<mcp_host>/http"
+# Claude Code will prompt for OAuth authentication on first use
+```
+
+#### Family members (non-technical users)
+
+A spouse or other family member uses the same **claude.ai web** steps above with
+their own Google account. Add their email to `AUTH_BUDGET_ACL` in `mcp.env` before
+they connect.
+
+**Other AI UIs that support custom remote MCP:**
+- **ChatGPT (Plus/Pro/Team):** Settings → Connectors → Create; supports remote MCP
+  with OAuth. Very user-friendly web and mobile apps.
+- **Open WebUI** (self-hosted): Admin Settings → External Tools → Add; web UI-driven.
+- **Gemini:** Gemini CLI (`gemini-cli mcp add`) supports remote MCP. The consumer
+  gemini.google.com web/mobile apps do **not** support custom remote MCP servers.
 
 Then verify with a read first ("list my accounts and this month's category
 balances") before trying any write.
@@ -279,74 +343,76 @@ balances") before trying any write.
 - **Backups:** confirm the §5.1 weekly Actual export still runs — it's your
   recovery path for an unwanted AI write.
 
-### 7. OIDC cutover — deployment runbook (ADR-0003)
+### 7. OIDC cutover — deployment runbook (ADR-0004)
 
-Migrate the gate from the shared Bearer token to per-user OIDC. Run this **after**
-the Bearer deployment (steps 1–6) is live; it keeps Bearer working until OIDC is
-verified, so it is reversible at every step. Steps below are tagged **(workstation)**
-— run on your local machine, bash + PowerShell shown — or **(on the box)** — run
-inside the SSH session on the Linux server (no PowerShell translation needed, same as
-steps 3–4). `$IP` / `$MCP_HOST` come from `terraform output` (step 2); re-assign them
-if your shell has lost them (PowerShell: `$MCP_HOST = (terraform output -raw mcp_host).Trim()`).
+Migrate the gate from the shared Bearer token to per-user Google OIDC. Run this
+**after** the Bearer deployment (steps 1–6) is live. Steps below are tagged
+**(workstation)** — run on your local machine — or **(on the box)** — run inside the
+SSH session. `$IP` / `$MCP_HOST` come from `terraform output` (step 2).
 
-**7a. (optional) Stand up the Cloudflare Access service-token layer — (workstation).**
-Skip if you are doing pure OIDC (path a). From `infra/terraform/` (adds 1 Access app
-+ 1 service token on the MCP host):
+> **Hard flip warning.** `AUTH_PROVIDER=oidc` disables Bearer token auth server-wide.
+> There is no dual-auth mode. Once set, all clients must use OAuth. Rollback requires
+> editing `mcp.env` and restarting the container (see §7f).
 
-**bash:**
-```bash
-echo 'enable_mcp_access_service_token = true' >> terraform.tfvars
-terraform apply
-terraform output -raw mcp_access_service_token_client_id      # CF-Access-Client-Id
-terraform output -raw mcp_access_service_token_secret         # CF-Access-Client-Secret (store with the client)
-```
+**7a. Create the Google OAuth 2.0 client — (workstation, one-time).**
 
-**PowerShell:**
-```powershell
-Add-Content terraform.tfvars 'enable_mcp_access_service_token = true'
-terraform apply
-terraform output -raw mcp_access_service_token_client_id      # CF-Access-Client-Id
-terraform output -raw mcp_access_service_token_secret         # CF-Access-Client-Secret (store with the client)
-```
+1. Go to [console.cloud.google.com](https://console.cloud.google.com) → APIs & Services
+   → Credentials → + Create Credentials → OAuth 2.0 Client ID
+2. Application type: **Web application**; Name: `Household Budget MCP`
+3. Add **Authorized redirect URIs** (add all of these; exact URIs vary by Claude
+   client version — add `https://claude.ai/oauth-callback` and `http://localhost` as
+   a minimum, then extend from client docs):
+   - `https://claude.ai/oauth-callback`
+   - `https://claude.ai/callback`
+   - `http://localhost`
+4. Click **Create**. Copy the **Client ID** and **Client Secret**.
+5. Configure the OAuth consent screen (External; app name "Household Budget MCP";
+   scopes `openid` and `email`; test users: your Gmail address).
 
-**7b. Add the OIDC block to `mcp.env`, keeping the Bearer token set — (on the box).**
+**7b. Add the OIDC block to `mcp.env` — (on the box).**
 
 ```bash
 ssh root@$IP
 cd /opt/household-os/actual
 cat >> mcp.env <<'OIDC'
 AUTH_PROVIDER=oidc
-OIDC_ISSUER=https://<your-team>.cloudflareaccess.com
-OIDC_RESOURCE=<expected-jwt-aud>
-OIDC_SCOPES=
+OIDC_ISSUER=https://accounts.google.com
+OIDC_RESOURCE=<google-oauth-client-id>
+OIDC_ACCEPTED_AUDIENCES=<google-oauth-client-id>
+OIDC_SCOPES=openid email
 AUTH_BUDGET_ACL={"you@gmail.com":["<budget-sync-id>"]}
 OIDC
-nano mcp.env          # fill the three <...> placeholders; leave MCP_SSE_AUTHORIZATION in place
+nano mcp.env          # fill the <...> placeholders; leave MCP_SSE_AUTHORIZATION in place
 docker compose up -d actual-mcp
-docker compose logs --tail=40 actual-mcp   # should report OIDC/JWKS init, no errors
+docker compose logs --tail=40 actual-mcp   # should report OIDC/JWKS init with Google issuer, no errors
 exit
 ```
 
-**7c. Obtain a valid JWT for testing — (workstation).** Use `cloudflared` against the
-MCP host's Access app (its AUD must equal `OIDC_RESOURCE`):
+**7c. Obtain a Google ID token for testing — (workstation).** Complete the OAuth flow
+with your client credentials and extract the `id_token` from the token response.
+Options:
+- **gcloud:** `gcloud auth print-identity-token` (if Google Cloud SDK is installed
+  and authenticated with the same Google account)
+- **Postman / Insomnia:** create an OAuth 2.0 request with your client ID/secret and
+  `openid email` scopes; copy the `id_token` from the JSON response
+- **curl:** exchange an authorization code from the browser flow manually
 
-**bash:**
 ```bash
-cloudflared access login https://$MCP_HOST
-JWT=$(cloudflared access token --app=https://$MCP_HOST)   # short-lived, issuer-minted
+# gcloud method (simplest if already installed):
+JWT=$(gcloud auth print-identity-token)
 ```
 
-**PowerShell:**
 ```powershell
-cloudflared access login "https://$MCP_HOST"
-$JWT = cloudflared access token --app="https://$MCP_HOST"  # short-lived, issuer-minted
+# gcloud method (PowerShell):
+$JWT = gcloud auth print-identity-token
 ```
+
+> **Note:** `gcloud auth print-identity-token` issues a token for the gcloud project's
+> audience, not your OAuth client ID. To test with the exact audience the MCP server
+> expects, use a token obtained via Postman/curl with your client credentials.
 
 **7d. Run the acceptance criteria — (workstation).** Define a probe that POSTs a
-standard MCP `tools/list` (gated by the auth layer, so the HTTP status cleanly proves
-accept vs reject), then call it per test. If 7a is enabled, also send the
-`CF-Access-Client-Id` / `CF-Access-Client-Secret` headers (curl `-H`, or add them to
-the PowerShell `$headers` hashtable).
+standard MCP `tools/list`, then call it per test.
 
 **bash:**
 ```bash
@@ -358,14 +424,21 @@ probe() {  # usage: probe "<Authorization header value>"
     --data '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 }
 
-probe "Bearer $JWT"                              # 1. Positive → 200 (then confirm a real read in your AI client)
-probe ""                                         # 2. No token → 401
-probe "Bearer $WRONG_ISSUER_JWT"                 # 3. Wrong issuer → 401/403
-probe "Bearer $WRONG_AUD_JWT"                    # 4. Wrong audience → 401/403
-probe "Bearer $EXPIRED_JWT"                      # 5. Expired → 401/403
-probe "Bearer $(printf '%s' "$JWT" | sed 's/.$/X/')"   # 6. Tampered sig → 401/403
-# 7. ACL (only if AUTH_BUDGET_ACL covers >1 budget): from the AI client, a user mapped
-#    to budget A must NOT be able to read budget B.
+probe "Bearer $JWT"                                          # 1. Positive (ID token) → 200
+                                                             #    IF 401: check server logs — JWT parse error =
+                                                             #    opaque access token; see ADR-0004 Consequences
+probe ""                                                     # 2. No token → 401
+probe "Bearer eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiJodHRwczovL2V4YW1wbGUuY29tIn0.fake"  # 3. Wrong issuer → 401
+probe "Bearer $(echo "$JWT" | python3 -c "
+import sys, json, base64
+parts = sys.stdin.read().strip().split('.')
+payload = json.loads(base64.urlsafe_b64decode(parts[1] + '=='))
+payload['aud'] = 'wrong-client-id'
+parts[1] = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip('=')
+print('.'.join(parts))")"                                   # 4. Wrong audience → 401
+# 5. Expired: reuse a captured $JWT after its 1-hour expiry window → 401
+probe "Bearer $(printf '%s' "$JWT" | sed 's/.$/X/')"        # 6. Tampered signature → 401
+# 7. ACL: with a second Google account not in AUTH_BUDGET_ACL, attempt a read → 403
 ```
 
 **PowerShell:**
@@ -379,70 +452,61 @@ function Probe([string]$Auth) {  # usage: Probe "Bearer <token>"  ('' for no tok
   } catch { $_.Exception.Response.StatusCode.value__ }   # 401/403 land here
 }
 
-Probe "Bearer $JWT"                              # 1. Positive → 200 (then confirm a real read in your AI client)
-Probe ""                                         # 2. No token → 401
-Probe "Bearer $WRONG_ISSUER_JWT"                 # 3. Wrong issuer → 401/403
-Probe "Bearer $WRONG_AUD_JWT"                    # 4. Wrong audience → 401/403
-Probe "Bearer $EXPIRED_JWT"                      # 5. Expired → 401/403
-Probe ("Bearer " + $JWT.Substring(0, $JWT.Length - 1) + "X")   # 6. Tampered sig → 401/403
-# 7. ACL (only if AUTH_BUDGET_ACL covers >1 budget): from the AI client, a user mapped
-#    to budget A must NOT be able to read budget B.
+Probe "Bearer $JWT"                                          # 1. Positive (ID token) → 200
+Probe ""                                                     # 2. No token → 401
+# 3–7: obtain tokens with wrong issuer, wrong aud, expired, tampered sig for the negative tests
+Probe ("Bearer " + $JWT.Substring(0, $JWT.Length - 1) + "X")  # 6. Tampered signature → 401
 ```
 
-> Tokens for tests 3–5 come from the issuer side: #3 sign any JWT with a non-CF key
-> (e.g. `https://accounts.google.com`), #4 a `cloudflared access token` for a second
-> Access app, #5 a captured `$JWT` reused past its expiry. All must be **rejected** —
-> especially #6: a tampered signature that is *accepted* means validation is cosmetic;
-> do **not** remove the Bearer token in that case (fall back per ADR-0003).
+**7e. Write-path check — (AI client).**
 
-**7e. Write-path + rollback checks.**
+- **8.** With the AI client connector configured (§5 above), add a $1 test transaction,
+  confirm it appears in the Actual web app, then delete it — same smoke test as step 6.
 
-- **8. Write path — (AI client):** with the connector now on the JWT, add a $1 test
-  txn, confirm it in the Actual web app, then delete it — same smoke test as step 6.
-- **9. Bearer still works — (workstation):** set `$BEARER` / `BEARER` to the
-  `MCP_SSE_AUTHORIZATION` value from `mcp.env`, then confirm the legacy path still
-  authenticates while `AUTH_PROVIDER=oidc` (proves the cutover is reversible):
+**7f. Hard-flip confirmation + cut over — (workstation + box).**
 
-**bash:** `probe "Bearer $BEARER"`   ·   **PowerShell:** `Probe "Bearer $BEARER"`
+- **9.** Confirm the Bearer path is now disabled:
 
-**7f. Cut over (remove the Bearer token) once 1–9 pass.** Edit the file **(on the
-box)**, then re-verify **(workstation)**:
+  **bash:** `probe "Bearer $BEARER"` (where `$BEARER` is the `MCP_SSE_AUTHORIZATION` value) → **401**
+
+  **PowerShell:** `Probe "Bearer $BEARER"` → **401**
+
+  A 401 here is expected and correct — it proves the hard flip is in effect.
+
+Once criteria 1–9 pass, remove the Bearer token **(on the box)**:
 
 ```bash
-# (on the box):
 ssh root@$IP "cd /opt/household-os/actual && sed -i '/^MCP_SSE_AUTHORIZATION=/d' mcp.env && docker compose up -d actual-mcp"
 ```
 
-**bash (workstation):**
+Re-verify **(workstation):**
+
+**bash:** `probe "Bearer $JWT"` → 200 · `probe ""` → 401
+
+**PowerShell:** `Probe "Bearer $JWT"` → 200 · `Probe ""` → 401
+
+**Rollback (if OIDC misbehaves at any point) — (on the box).** Restore the Bearer
+line and remove the OIDC block:
+
 ```bash
-probe "Bearer $JWT"   # re-verify positive → 200
-probe ""              # re-verify no-token → 401
+ssh root@$IP
+cd /opt/household-os/actual
+echo "MCP_SSE_AUTHORIZATION=<saved-token>" >> mcp.env
+sed -i '/^AUTH_PROVIDER=/d' mcp.env        # remove oidc flip
+docker compose up -d actual-mcp
+exit
 ```
 
-**PowerShell (workstation):**
-```powershell
-Probe "Bearer $JWT"   # re-verify positive → 200
-Probe ""              # re-verify no-token → 401
-```
-
-Then update the connector to the JWT (and, if 7a is on, the `CF-Access-Client-Id` /
-`CF-Access-Client-Secret` headers), and flip **ADR-0003** Status → Accepted with
-today's date in `docs/decisions/0003-mcp-oidc-auth.md` and `docs/decisions/README.md`.
-
-**Rollback (if OIDC misbehaves at any point) — (on the box):** restore the Bearer line
-in `mcp.env` (`echo "MCP_SSE_AUTHORIZATION=<saved token>" >> mcp.env`), remove or
-comment the `AUTH_PROVIDER=oidc` line, `docker compose up -d actual-mcp`, and point the
-connector back at the Bearer header. If you enabled 7a and want it gone too, set
-`enable_mcp_access_service_token = false` and `terraform apply` **(workstation)**.
+Then reconfigure client connectors to use the Bearer token header again.
 
 ---
 
 ## Operations
 
-- **Pin the image.** The compose pins `actual-mcp` to `:v0.7.9` (off `:latest`) so
+- **Pin the image.** The compose pins `actual-mcp` to `:v0.7.11` (off `:latest`) so
   an upstream change can't surprise a process holding your financial credentials —
-  this is also the tag whose `docs/guides/AI_CLIENT_SETUP.md` defines the OIDC env
-  vars above. Bump the tag deliberately and re-run the smoke + auth tests after.
+  v0.7.11 is the first semver release with OIDC support on `main` (ADR-0004). Bump
+  the tag deliberately after reading release notes and re-run the smoke + auth tests.
 - **Rotate the token** by editing `mcp.env` and `docker compose up -d actual-mcp`;
   update the connector. Do this if a device with the token is lost.
 - **Logs:** `docker compose logs -f actual-mcp`. Set `MCP_BRIDGE_STORE_LOGS=true`
