@@ -366,8 +366,9 @@ SSH session. `$IP` / `$MCP_HOST` come from `terraform output` (step 2).
    - `https://claude.ai/callback`
    - `http://localhost`
 4. Click **Create**. Copy the **Client ID** and **Client Secret**.
-5. Configure the OAuth consent screen (External; app name "Household Budget MCP";
-   scopes `openid` and `email`; test users: your Gmail address).
+5. Configure the OAuth consent screen: **APIs & Services → OAuth consent screen →
+   Data Access → Add or remove scopes** — add `openid` and `email`. Under
+   **Audience**, add your Gmail as a test user if the app is in Testing mode.
 
 **7b. Add the OIDC block to `mcp.env` — (on the box).**
 
