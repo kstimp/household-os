@@ -1,10 +1,12 @@
 # 0003 — OIDC for the MCP budget server; leave Actual on Cloudflare Access
 
-- **Status:** Proposed
+- **Status:** Superseded by ADR-0004
+- **Superseded date:** 2026-06-22
 - **Date:** 2026-06-16
 - **Deciders:** Household OS owner
 - **Related:** ADR-0002 (write-capable MCP server — this is the "hardening upgrade"
-  it names); design-doc §4.1 (Cloudflare Access human-access model), §4.2
+  it names); ADR-0004 (permanent decision — Google as direct OIDC issuer, supersedes
+  this ADR); design-doc §4.1 (Cloudflare Access human-access model), §4.2
   (roles/visibility), §4.4 (secrets on the VPS); `docs/mcp-budget-server.md`
   ("Hardening upgrade — OIDC instead of a shared Bearer token"); `infra/actual/`,
   `infra/terraform/`
@@ -138,105 +140,43 @@ above, points squarely at reusing the Cloudflare/Google identity already in plac
 
 ---
 
-## Implementation appendix (for the build session)
+## Why this ADR was not implemented
 
-> **Status of this appendix:** the repo-side changes below are now **applied** in
-> infra + docs (image pinned, OIDC env block, optional service-token Terraform).
-> What remains is the **live cutover** on the VPS — running the acceptance criteria
-> against the running server, then removing `MCP_SSE_AUTHORIZATION`. The ADR Status
-> stays **Proposed** until that cutover runs (then flip to Accepted, dated).
+The repo-side changes (image pin, OIDC env block, Terraform service-token option) were
+merged in PR #12. The live cutover attempt on 2026-06-21 (issue #14) revealed three
+independent blockers. All three must be overcome for OIDC via CF Access to work; none
+were surmountable without a fundamentally different architecture.
 
-### Pre-work / unknowns — resolved
+**Blocker 1 — CF Access OIDC discovery is browser-only.** CF Access's OIDC discovery
+document (`/.well-known/openid-configuration`) does not publish `authorization_endpoint`
+or `token_endpoint`. Claude's connectors require an OAuth 2.1 PKCE flow to obtain tokens,
+which CF Access cannot supply. The only tool that can mint CF Access JWTs non-interactively
+is `cloudflared` — and it requires a non-bypass Access policy (see Blocker 2).
 
-1. **Pinned + read the upstream release.** Pinned `ghcr.io/agigante80/actual-mcp-server:v0.7.9`
-   (off `:latest`). Confirmed against its `docs/guides/AI_CLIENT_SETUP.md` that
-   `AUTH_PROVIDER=oidc` fetches the issuer's **JWKS** and validates **signature +
-   issuer + audience** on every request — not just "a bearer string is present."
-   The env-var names drifted from the draft below: there is also an **`OIDC_SCOPES`**
-   var (must be empty for issuers, incl. Cloudflare Access and Casdoor, whose tokens
-   carry no `scope` claim), and `AUTH_BUDGET_ACL` is a **JSON object** mapping a
-   principal (`email` | `sub` | `group:<name>`) to a list of budget sync IDs
-   (`["*"]` = all budgets).
-2. **Issuer flow.** Both paths are wired so the operator can pick at deploy time:
-   (a) Cloudflare Access as OIDC issuer — `OIDC_ISSUER=https://<team>.cloudflareaccess.com`,
-   JWKS at `/cdn-cgi/access/certs`, `OIDC_RESOURCE` = the Access app's AUD tag; and
-   (b) the **service-token** header layer, now available behind
-   `var.enable_mcp_access_service_token` (default off). Per the rule below, if the
-   client can't do (a), ship (b) first.
-3. **Client capability.** Upstream docs reference Casdoor and make **no mention of
-   Cloudflare Access**, and the Claude connector's ability to complete CF Access's
-   browser OIDC flow could not be verified offline. So (b) is provided as the
-   deployable interim gate and true per-user OIDC (a) is the follow-up — exactly the
-   fallback this ADR's pre-work prescribes.
+**Blocker 2 — Bypass policy and `cloudflared` JWT minting are mutually exclusive.** The
+MCP host requires a `bypass` CF Access policy so non-browser MCP clients are not
+redirected to the Google login page. With `bypass` active, `cloudflared access login`
+returns "failed to find Access application" — CF Access sees no auth requirement and
+refuses to issue a JWT. There is no configuration that satisfies both "MCP clients pass
+through" and "`cloudflared` can mint a JWT."
 
-### Target config — `infra/actual/mcp.env` (OIDC path)
+**Blocker 3 — `AUTH_PROVIDER=oidc` is a hard flip, not additive.** Setting it completely
+disables Bearer token auth server-wide. The original acceptance criterion 9 ("Bearer still
+works while OIDC is set") was architecturally impossible — it always returns 401 on Bearer
+requests when OIDC mode is active. This was not documented in the upstream server and was
+discovered only during live testing.
 
-```
-AUTH_PROVIDER=oidc
-OIDC_ISSUER=https://<your-team>.cloudflareaccess.com      # or chosen issuer; JWKS at <issuer>/cdn-cgi/access/certs
-OIDC_RESOURCE=<expected-jwt-aud>                          # audience the server enforces (CF Access AUD tag)
-OIDC_SCOPES=                                              # leave EMPTY for issuers with no `scope` claim (CF Access, Casdoor)
-AUTH_BUDGET_ACL={"you@gmail.com":["<budget-sync-id>"]}   # JSON: principal(email|sub|group:<name>) → [budget sync ids]; ["*"]=all
-# Keep MCP_SSE_AUTHORIZATION set during transition; REMOVE only after OIDC verified
-# ACTUAL_PASSWORD / ACTUAL_BUDGET_SYNC_ID / ACTUAL_BUDGET_PASSWORD unchanged
-```
+**What DID work:** server startup on `:develop`, JWKS fetch from CF Access at startup,
+no-token → 401, malformed/junk JWT → 401.
 
-`infra/actual/mcp.env.example` now carries this OIDC block (commented) alongside the
-Bearer var, with a note that Bearer and OIDC are mutually exclusive end-states.
+**The path that does work (taken in ADR-0004):** `OIDC_ISSUER=https://accounts.google.com`
+resolves all three blockers independently. Google publishes a complete OIDC discovery
+document including `authorization_endpoint` and `token_endpoint`. The CF Access
+bypass-policy constraint does not apply. The same Google identities already in use via CF
+Zero Trust are reused; the family allowlist moves into `AUTH_BUDGET_ACL`.
 
-### Interim defense-in-depth — Cloudflare Access service token
-
-If shipping the header layer first:
-- Create a service token in Cloudflare Zero Trust; the client attaches
-  `CF-Access-Client-Id` / `CF-Access-Client-Secret`.
-- This *does* require an Access application on `mcp-budget.<domain>` configured to
-  accept the **service token** (so it does not bounce non-browser clients to the
-  Google login page — the failure mode in `mcp-budget-server.md` troubleshooting).
-- Terraform: this reverses ADR-0002's "no Access app on the MCP host" specifically
-  for the service-token case — capture that nuance in `infra/terraform/` comments
-  so it is not mistaken for the misconfiguration the troubleshooting table warns
-  about.
-
-### Terraform / infra touch points
-
-- `infra/terraform/` — if using Cloudflare as issuer or a service token, add the
-  relevant Zero Trust resources (service token, and/or Access app scoped to the
-  MCP host) and outputs. Keep the budget host's existing Access app unchanged.
-- `infra/actual/docker-compose.yml` — pin the `actual-mcp` image tag; no structural
-  change otherwise (auth is env-driven).
-- No change to `actual-server` or its Caddy site — Actual stays on Cloudflare
-  Access per Decision (1).
-
-### Acceptance criteria (must all pass before removing the Bearer token)
-
-1. **Positive:** a request bearing a valid JWT from the configured issuer/audience
-   succeeds on a read tool ("list accounts").
-2. **Negative — no token:** rejected (401).
-3. **Negative — wrong issuer:** a well-formed JWT from a *different* issuer is
-   rejected.
-4. **Negative — wrong audience:** a valid-issuer JWT with the wrong `aud` is
-   rejected.
-5. **Negative — expired:** an expired token is rejected (proves expiry is checked).
-6. **Negative — tampered signature:** a token with a broken signature is rejected
-   (proves signature validation is real, not cosmetic — the key supply-chain test).
-7. **ACL:** a user mapped to budget A cannot reach budget B (if `AUTH_BUDGET_ACL`
-   is configured for >1 budget).
-8. **Write path still works** for an authorized user (one $1 test transaction,
-   confirmed in Actual, then deleted — same smoke test as ADR-0002 deploy runbook).
-9. **Rollback verified:** re-enabling the Bearer token path restores access (proves
-   the cutover is reversible) before you commit to removing it.
-
-### Cutover sequence
-
-1. Pin image tag; deploy with **both** Bearer and OIDC env present.
-2. Run acceptance criteria 1–9 with OIDC.
-3. Remove `MCP_SSE_AUTHORIZATION`; `docker compose up -d actual-mcp`; re-run 1–2.
-4. Update `docs/mcp-budget-server.md` (promote the OIDC section from "upgrade" to
-   "current"; move Bearer to "legacy/fallback") and flip this ADR to **Accepted**.
-
-### Docs to update on completion
-
-- `docs/mcp-budget-server.md` — security model + deploy runbook reflect OIDC as the
-  live gate.
-- `docs/decisions/0003-mcp-oidc-auth.md` — Status → Accepted, date the cutover.
-- `docs/decisions/README.md` — already indexed by this change.
+**Disposition.** Decision item 2 (OIDC via CF Access as issuer) is withdrawn. Decision
+items 1 (leave Actual on Cloudflare Access) and 3 (credentialed, reversible cutover
+principle) remain valid context. This ADR is Superseded rather than Rejected because the
+lessons learned directly inform ADR-0004 and the Google-as-issuer path is the continuation
+of this ADR's intent.
