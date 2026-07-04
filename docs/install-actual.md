@@ -799,6 +799,10 @@ If you rebuild the server from scratch, this is wired in via cloud-init — no m
 
 **Already have a running server?** See [`docs/runbook-os-updates.md`](runbook-os-updates.md) §1 for the one-time backfill steps. That runbook also covers manual updates, checking patch history, and troubleshooting.
 
+**Updating Actual Budget itself** (the app, not the OS) is a separate procedure — pulling a
+new container image and recreating it, with a full rollback plan and a caveat about the MCP
+server. See [`docs/runbook-actual-updates.md`](runbook-actual-updates.md).
+
 ---
 
 ## What Actual actually is (read this if something seems wrong)
