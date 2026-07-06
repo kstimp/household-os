@@ -16,7 +16,7 @@ services:
     volumes:
       - /mnt/data/actual:/data
     healthcheck:
-      test: ["CMD-SHELL", "node src/scripts/health-check.js"]
+      test: [ "CMD-SHELL", "node src/scripts/health-check.js" ]
       interval: 60s
       timeout: 10s
       retries: 3
@@ -34,7 +34,7 @@ services:
     # which predates OIDC support. OIDC is confirmed only on the develop track.
     # Revisit when a stable release that includes OIDC is published; pin to the
     # 0.x.x semver tag or a latest-<sha> digest at that point.
-    image: ghcr.io/agigante80/actual-mcp-server:develop
+    image: ghcr.io/agigante80/actual-mcp-server:0.8.1
     restart: unless-stopped
     depends_on:
       - actual-server
@@ -83,7 +83,6 @@ services:
       - ./certs:/certs:ro
       - caddy_data:/data
       - caddy_config:/config
-
 
 volumes:
   caddy_data:
