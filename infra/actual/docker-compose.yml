@@ -74,7 +74,7 @@ services:
   # See docs/install-actual-http-api.md. Pin the version tag — it should match
   # actual-server's release (26.x.x tracks Actual Budget 26.x.x).
   actual-http-api:
-    image: jhonderson/actual-http-api:26.6.1
+    image: jhonderson/actual-http-api:26.7.0
     restart: unless-stopped
     depends_on:
       - actual-server
