@@ -128,9 +128,18 @@ function render(){
   const loanTot = parseFloat($('loan').value);
   const loanRate = parseFloat($('loanRate').value)/100;
 
+  let sumPV = 0;
+  for (let m = 1; m <= 48; m++) {
+    sumPV += cash / Math.pow(1 + infl, (N + m) / 12);
+  }
+  const npvMonthly = cash > 0 ? sumPV / 48 : 0;
+
   $('inflVal').textContent = (infl*100).toFixed(1)+'%';
   $('retVal').textContent = (rs*100).toFixed(1)+'% \u2192 '+(re*100).toFixed(1)+'%';
-  $('cashVal').textContent = '$'+cash.toLocaleString()+'/mo';
+  
+  const npvText = cash > 0 ? ` <span style="color:var(--faint); font-weight:normal; font-size:12px; margin-left:4px;">(${fmt(npvMonthly)}/mo NPV)</span>` : '';
+  $('cashVal').innerHTML = '$' + cash.toLocaleString() + '/mo' + npvText;
+
   $('loanVal').textContent = '$'+loanTot.toLocaleString();
   $('loanRateVal').textContent = (loanRate*100).toFixed(2)+'%';
 
@@ -153,7 +162,7 @@ function render(){
     $('scenNote').innerHTML = 'Covers all four years from the 529 alone. <b>No payments or loans during college.</b>';
     loanBox.classList.remove('show');
   } else if(scenario==='B'){
-    $('scenNote').innerHTML = 'Plus <b>'+fmt(cash)+'/mo</b> from income during college ('+fmt(cash*48)+' total over 4 yrs).';
+    $('scenNote').innerHTML = 'Plus <b>'+fmt(cash)+'/mo</b> <span style="color:var(--muted); font-size:13px; font-weight:normal;">('+fmt(npvMonthly)+'/mo NPV)</span> from income during college ('+fmt(cash*48)+' total over 4 yrs).';
     loanBox.classList.remove('show');
   } else {
     const lc = loanCost(loanTot, loanRate);
