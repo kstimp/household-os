@@ -1,6 +1,7 @@
 locals {
-  budget_host = "${var.budget_subdomain}.${var.domain}"
-  mcp_host    = "${var.mcp_subdomain}.${var.domain}"
+  budget_host  = "${var.budget_subdomain}.${var.domain}"
+  mcp_host     = "${var.mcp_subdomain}.${var.domain}"
+  college_host = "college.${var.domain}"
 }
 
 # ---------------------------------------------------------------------------
@@ -144,6 +145,64 @@ resource "cloudflare_zero_trust_access_policy" "budget_family" {
     email = var.family_emails
   }
 }
+
+# ---------------------------------------------------------------------------
+# Edge: College Fund app (college.stimpert.haus).
+# ---------------------------------------------------------------------------
+
+resource "cloudflare_record" "college" {
+  zone_id = var.cloudflare_zone_id
+  name    = "college"
+  type    = "A"
+  content = hcloud_server.hub.ipv4_address
+  proxied = true
+  ttl     = 1
+}
+
+resource "tls_private_key" "college_origin" {
+  algorithm = "RSA"
+  rsa_bits  = 2048
+}
+
+resource "tls_cert_request" "college_origin" {
+  private_key_pem = tls_private_key.college_origin.private_key_pem
+  subject {
+    common_name = local.college_host
+  }
+  dns_names = [local.college_host]
+}
+
+resource "cloudflare_origin_ca_certificate" "college" {
+  csr                = tls_cert_request.college_origin.cert_request_pem
+  hostnames          = [local.college_host]
+  request_type       = "origin-rsa"
+  requested_validity = 5475 # 15 years
+}
+
+resource "cloudflare_zero_trust_access_application" "college" {
+  account_id           = var.cloudflare_account_id
+  name                 = "Household OS — College Fund Calculator"
+  domain               = local.college_host
+  type                 = "self_hosted"
+  session_duration     = var.access_session_duration
+  app_launcher_visible = true
+
+  allowed_idps              = [data.cloudflare_zero_trust_access_identity_provider.google.id]
+  auto_redirect_to_identity = true
+}
+
+resource "cloudflare_zero_trust_access_policy" "college_family" {
+  account_id     = var.cloudflare_account_id
+  application_id = cloudflare_zero_trust_access_application.college.id
+  name           = "Family allowlist"
+  precedence     = 1
+  decision       = "allow"
+
+  include {
+    email = var.family_emails
+  }
+}
+
 
 # ---------------------------------------------------------------------------
 # Edge: MCP budget server (agigante80/actual-mcp-server). See ADR-0002.

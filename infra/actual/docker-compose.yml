@@ -54,12 +54,27 @@ services:
       # Persist the synced budget copy on the Hetzner data volume.
       - /mnt/data/actual-mcp:/app/data
 
+  college-app:
+    image: college-app:latest
+    build:
+      context: ../college
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - "3000"
+    environment:
+      - PORT=3000
+      - DB_PATH=/app/data/data.db
+    volumes:
+      - /mnt/data/college:/app/data
+
   caddy:
     image: caddy:2
     restart: unless-stopped
     depends_on:
       - actual-server
       - actual-mcp
+      - college-app
     ports:
       - "80:80"
       - "443:443"
@@ -68,6 +83,7 @@ services:
       - ./certs:/certs:ro
       - caddy_data:/data
       - caddy_config:/config
+
 
 volumes:
   caddy_data:

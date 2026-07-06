@@ -24,3 +24,10 @@ mcp-budget.example.com {
 
 	reverse_proxy actual-mcp:3600
 }
+
+college.example.com {
+	tls /certs/college-origin.pem /certs/college-origin.key
+
+	reverse_proxy college-app:3000
+}
+

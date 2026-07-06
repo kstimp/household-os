@@ -1,0 +1,14 @@
+{
+  "name": "college-fund-calculator",
+  "version": "1.0.0",
+  "description": "State-persisted backend and frontend for Theodore's college fund savings analysis.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "express": "^4.19.2"
+  }
+}

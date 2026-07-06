@@ -11,7 +11,8 @@ set -euo pipefail
 
 BUCKET="household-os-backups"
 PREFIX="actual-backups"
-DATA_DIR="/mnt/data/actual"
+DATA_DIR_ACTUAL="/mnt/data/actual"
+DATA_DIR_COLLEGE="/mnt/data/college"
 COMPOSE_DIR="/opt/household-os/actual"
 
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"; }
@@ -35,7 +36,7 @@ echo ""
 echo "Available archives in R2:"
 rclone ls --s3-no-check-bucket "r2:${BUCKET}/${PREFIX}/" | sort
 echo ""
-read -r -p "Restore '${ARCHIVE_NAME}' to ${DATA_DIR}? This will stop Actual. [yes/N] " CONFIRM
+read -r -p "Restore '${ARCHIVE_NAME}' to /mnt/data? This will stop Actual and College services. [yes/N] " CONFIRM
 if [ "${CONFIRM}" != "yes" ]; then
   echo "Aborted."
   exit 0
@@ -47,32 +48,42 @@ log "Downloading archive..."
 rclone copy --s3-no-check-bucket "r2:${BUCKET}/${PREFIX}/${ARCHIVE_NAME}" /tmp/
 log "Downloaded to ${TMPFILE}"
 
-# Stop actual-server (and actual-mcp if running — both use the data volume).
-log "Stopping Actual containers..."
-docker compose -f "${COMPOSE_DIR}/docker-compose.yml" stop actual-server actual-mcp 2>/dev/null || \
-  docker compose -f "${COMPOSE_DIR}/docker-compose.yml" stop actual-server
+# Stop containers.
+log "Stopping Actual and College containers..."
+docker compose -f "${COMPOSE_DIR}/docker-compose.yml" stop actual-server actual-mcp college-app 2>/dev/null || \
+  docker compose -f "${COMPOSE_DIR}/docker-compose.yml" stop actual-server college-app
 
-# Move the current data directory aside.
+# Move current data directories aside.
 BACKUP_TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
-BACKUP_ASIDE="/mnt/data/actual.bak.${BACKUP_TIMESTAMP}"
-if [ -d "${DATA_DIR}" ]; then
-  mv "${DATA_DIR}" "${BACKUP_ASIDE}"
-  log "Existing data moved aside: ${BACKUP_ASIDE}"
+BACKUP_ASIDE_ACTUAL="/mnt/data/actual.bak.${BACKUP_TIMESTAMP}"
+BACKUP_ASIDE_COLLEGE="/mnt/data/college.bak.${BACKUP_TIMESTAMP}"
+if [ -d "${DATA_DIR_ACTUAL}" ]; then
+  mv "${DATA_DIR_ACTUAL}" "${BACKUP_ASIDE_ACTUAL}"
+  log "Existing actual data moved aside: ${BACKUP_ASIDE_ACTUAL}"
+fi
+if [ -d "${DATA_DIR_COLLEGE}" ]; then
+  mv "${DATA_DIR_COLLEGE}" "${BACKUP_ASIDE_COLLEGE}"
+  log "Existing college data moved aside: ${BACKUP_ASIDE_COLLEGE}"
 fi
 
-# Extract the backup (archive contains the 'actual/' directory).
+# Extract the backup (contains both 'actual/' and 'college/' directories).
 log "Extracting archive..."
 tar -xzf "${TMPFILE}" -C /mnt/data
 rm -f "${TMPFILE}"
 log "Extraction complete"
 
 # Restart.
-log "Starting Actual containers..."
-docker compose -f "${COMPOSE_DIR}/docker-compose.yml" start actual-server actual-mcp 2>/dev/null || \
-  docker compose -f "${COMPOSE_DIR}/docker-compose.yml" start actual-server
+log "Starting containers..."
+docker compose -f "${COMPOSE_DIR}/docker-compose.yml" start actual-server actual-mcp college-app 2>/dev/null || \
+  docker compose -f "${COMPOSE_DIR}/docker-compose.yml" start actual-server college-app
 
 # Brief wait for the health check.
 sleep 5
 docker compose -f "${COMPOSE_DIR}/docker-compose.yml" ps
 
-log "Restore complete. To roll back: stop Actual, run 'mv ${DATA_DIR} /mnt/data/actual.trash && mv ${BACKUP_ASIDE} ${DATA_DIR}', then start Actual."
+log "Restore complete. To roll back:"
+log "  1. Stop containers: docker compose stop actual-server actual-mcp college-app"
+log "  2. Restore backup directories:"
+log "     mv ${DATA_DIR_ACTUAL} /mnt/data/actual.trash && mv ${BACKUP_ASIDE_ACTUAL} ${DATA_DIR_ACTUAL}"
+log "     mv ${DATA_DIR_COLLEGE} /mnt/data/college.trash && mv ${BACKUP_ASIDE_COLLEGE} ${DATA_DIR_COLLEGE}"
+log "  3. Start containers: docker compose start actual-server actual-mcp college-app"

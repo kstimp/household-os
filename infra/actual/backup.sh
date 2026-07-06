@@ -16,17 +16,18 @@ log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"; }
 
 log "Starting backup (timestamp=${TIMESTAMP})"
 
-# Pause actual-server for a consistent snapshot (Docker pause is sub-second;
+# Pause actual-server and college-app for a consistent snapshot (Docker pause is sub-second;
 # Caddy and actual-mcp stay up and serve cached data during the pause).
-docker compose -f "${COMPOSE_DIR}/docker-compose.yml" pause actual-server
-trap 'docker compose -f "${COMPOSE_DIR}/docker-compose.yml" unpause actual-server 2>/dev/null || true' EXIT
+docker compose -f "${COMPOSE_DIR}/docker-compose.yml" pause actual-server college-app
+trap 'docker compose -f "${COMPOSE_DIR}/docker-compose.yml" unpause actual-server college-app 2>/dev/null || true' EXIT
 
-tar -czf "${ARCHIVE}" -C /mnt/data actual
+tar -czf "${ARCHIVE}" -C /mnt/data actual college
 log "Archive created: $(du -sh "${ARCHIVE}" | cut -f1)"
 
-docker compose -f "${COMPOSE_DIR}/docker-compose.yml" unpause actual-server
+docker compose -f "${COMPOSE_DIR}/docker-compose.yml" unpause actual-server college-app
 trap - EXIT
-log "actual-server resumed"
+log "actual-server and college-app resumed"
+
 
 rclone copy --s3-no-check-bucket "${ARCHIVE}" "r2:${BUCKET}/${PREFIX}/"
 log "Uploaded to r2:${BUCKET}/${PREFIX}/actual-${TIMESTAMP}.tar.gz"

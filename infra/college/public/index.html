@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Theodore · College Fund Plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">College Funding Plan</div>
+    <h1>Theodore &rarr; KU, Fall 2039</h1>
+    <div class="sub">Full cost of attendance &middot; <span class="num">4</span> years &middot; <span class="num" id="monthsRem">157</span> monthly contributions left until matriculation (Aug 2039)</div>
+  </header>
+
+  <div class="grid">
+    <!-- LEFT: result + chart + logs -->
+    <div>
+      <div class="card hero">
+        <h2>Required monthly contribution</h2>
+        <div class="toggle" id="scenToggle">
+          <button data-scen="A" class="on">Fund upfront</button>
+          <button data-scen="B">+ Cash flow</button>
+          <button data-scen="C">+ Parent loans</button>
+        </div>
+        <div class="answer">
+          <span class="big num" id="monthlyOut">$0</span>
+          <span class="per">/ month</span>
+        </div>
+        <div class="answer-note" id="scenNote"></div>
+        <div class="subline">
+          <div class="stat"><div class="k">Balance at matriculation</div><div class="v teal num" id="matricOut">$0</div></div>
+          <div class="stat"><div class="k">Total you contribute</div><div class="v num" id="totalContribOut">$0</div></div>
+          <div class="stat"><div class="k">Growth earned</div><div class="v gold num" id="growthOut">$0</div></div>
+        </div>
+        <div class="loanbox" id="loanBox">
+          <div class="stat"><div class="k">Owed at graduation</div><div class="v red num" id="loanOwed">$0</div></div>
+          <div class="stat"><div class="k">Loan payment (10 yr)</div><div class="v red num" id="loanPmt">$0</div></div>
+          <div class="stat"><div class="k">Interest paid</div><div class="v red num" id="loanInt">$0</div></div>
+        </div>
+      </div>
+
+      <div class="card chart-card">
+        <h2>Projected 529 balance</h2>
+        <svg id="chart" viewBox="0 0 640 240"></svg>
+        <div class="legend">
+          <span><span class="dot" style="background:#2e8b83"></span>Actual (saved reviews)</span>
+          <span><span class="dot" style="background:var(--teal)"></span>Plan forward</span>
+          <span><span class="dot" style="background:var(--gold)"></span>Drawdown</span>
+        </div>
+      </div>
+
+      <div class="card logcard">
+        <h2>Semi-annual review log</h2>
+        <div class="logactions">
+          <button id="saveReview" class="btn">Save this review</button>
+        </div>
+        <table class="logtable">
+          <thead><tr><th>Review date</th><th>Balance</th><th>Plan</th><th>Required / mo</th><th>Actions</th></tr></thead>
+          <tbody id="logBody"></tbody>
+        </table>
+        <div class="hint" style="margin-top:12px">Persisted to SQLite database on VPS. Saving the same review date again overwrites that row.</div>
+      </div>
+    </div>
+
+    <!-- RIGHT: levers + plans + cost -->
+    <div>
+      <div class="card">
+        <h2>Your inputs</h2>
+        <div class="lever">
+          <label>Review date <span class="val" id="reviewNote"></span></label>
+          <input id="review" type="month" value="2026-07" class="dateinput">
+          <div class="hint">Set to today whenever you revisit. The plan re-solves over the months remaining.</div>
+        </div>
+        <div class="lever">
+          <label>Current 529 balance</label>
+          <div class="money-input"><span>$</span><input id="balance" class="num" type="text" value="2,530"></div>
+        </div>
+        <div class="lever" id="cashLever">
+          <label>Cash flow during college <span class="val" id="cashVal">$0/mo</span></label>
+          <input id="cash" type="range" min="0" max="3000" step="50" value="0">
+          <div class="hint">Future (nominal) dollars at the time spent &mdash; $1,000/mo means $1,000 in 2039, not inflation-adjusted. Only used in "+ Cash flow."</div>
+        </div>
+        <div class="lever" id="loanLever">
+          <label>Borrow via Parent PLUS <span class="val" id="loanVal">$0</span></label>
+          <input id="loan" type="range" min="0" max="65000" step="1000" value="0">
+          <div class="hint">Total applied to the bill across 4 yrs. New federal cap ~$65k/student. 4.228% origination fee; ~10-yr repayment after graduation.</div>
+        </div>
+        <div class="lever" id="loanRateLever">
+          <label>Loan interest rate <span class="val" id="loanRateVal">9.0%</span></label>
+          <input id="loanRate" type="range" min="5" max="12" step="0.25" value="9">
+          <div class="hint">2025&ndash;26 Parent PLUS rate is 8.94%; set annually, so this is unknown for 2039.</div>
+        </div>
+        <div class="lever">
+          <label>Residency</label>
+          <div class="seg" id="resSeg">
+            <button data-coa="28808" class="on">In-state (KU)</button>
+            <button data-coa="47138">Out-of-state</button>
+          </div>
+          <div class="hint">Base full COA, 2024&ndash;25. In-state $28,808 &middot; out-of-state $47,138.</div>
+        </div>
+        <div class="lever">
+          <label>College cost inflation <span class="val" id="inflVal">5.0%</span></label>
+          <input id="infl" type="range" min="2" max="8" step="0.5" value="5">
+        </div>
+        <div class="lever">
+          <label>Return now &rarr; enrollment <span class="val" id="retVal">7.0% &rarr; 4.5%</span></label>
+          <input id="retStart" type="range" min="4" max="9" step="0.5" value="7">
+          <input id="retEnd" type="range" min="2" max="6" step="0.5" value="4.5" style="margin-top:8px">
+          <div class="hint">UTAMX glides from ~94% equity today to conservative at enrollment.</div>
+        </div>
+      </div>
+
+      <div class="card plans-card">
+        <h2>Saved Plans</h2>
+        <div class="plan-save-box">
+          <input id="planNameInput" type="text" placeholder="Plan name (e.g. In-state upfront)" class="plan-input">
+          <button id="savePlanBtn" class="btn">Save Plan</button>
+        </div>
+        <div id="plansList" class="plans-list">
+          <!-- Populated by JS -->
+          <div class="no-plans">Loading plans...</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:20px">
+        <h2>Cost of attendance (future $)</h2>
+        <div id="costRows"></div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <b>Model notes.</b> Full COA (tuition, fees, housing, food, books, transport, personal) &mdash; no student-earnings offset, so a part-time job stays optional. Costs inflate from the 2024&ndash;25 base to each academic year. Contributions run monthly from your review date to matriculation (Aug 2039); the balance keeps growing at ~4% during college, with each year's cost withdrawn up front. "Fully fund upfront" solves for a monthly amount that covers all four years with no help during college; "Blend" lets cash flow during college cover part, lowering the monthly ask. This is a planning estimate, not financial advice &mdash; returns aren't guaranteed. All contributions and cash flow are flat nominal dollars (not inflation-adjusted); only the cost of attendance is inflated.
+  </footer>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
