@@ -151,19 +151,19 @@ ssh root@$IP 'chmod 600 /opt/household-os/actual/certs/actual-api-origin.key'
 
 ## Part 4 — Update the Caddyfile
 
-The Caddyfile ships with a `actual-api.example.com` placeholder. Replace it with your real
+The Caddyfile ships with a `api-money.example.com` placeholder. Replace it with your real
 host:
 
 **bash:**
 ```bash
 ACTUAL_API_HOST=$(terraform output -raw actual_api_host)
-ssh root@$IP "sed -i 's/actual-api.example.com/$ACTUAL_API_HOST/' /opt/household-os/actual/Caddyfile"
+ssh root@$IP "sed -i 's/api-money.example.com/$ACTUAL_API_HOST/' /opt/household-os/actual/Caddyfile"
 ```
 
 **PowerShell:**
 ```powershell
 $actualApiHost = terraform output -raw actual_api_host
-ssh root@$IP "sed -i 's/actual-api.example.com/$actualApiHost/' /opt/household-os/actual/Caddyfile"
+ssh root@$IP "sed -i 's/api-money.example.com/$actualApiHost/' /opt/household-os/actual/Caddyfile"
 ```
 
 Verify the Caddyfile looks right:

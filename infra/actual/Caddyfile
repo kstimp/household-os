@@ -31,12 +31,12 @@ college.example.com {
 	reverse_proxy college-app:3000
 }
 
-# Actual HTTP REST API (jhonderson/actual-http-api). Replace actual-api.example.com
+# Actual HTTP REST API (jhonderson/actual-http-api). Replace api-money.example.com
 # with your real host (matches Terraform's actual_api_host output).
 # Like the MCP host, deliberately NO Cloudflare Access app here — programmatic
 # REST clients can't do browser SSO. The gate is API_KEY in actual-http-api.env.
 # See docs/install-actual-http-api.md.
-actual-api.example.com {
+api-money.example.com {
 	tls /certs/actual-api-origin.pem /certs/actual-api-origin.key
 
 	reverse_proxy actual-http-api:5007

@@ -60,7 +60,7 @@ variable "actual_api_subdomain" {
     in actual-http-api.env. See docs/install-actual-http-api.md.
   EOT
   type        = string
-  default     = "actual-api"
+  default     = "api-money"
 }
 
 # ---- Access control -------------------------------------------------------

@@ -8,7 +8,7 @@ cloudflare_zone_id    = "0123456789abcdef0123456789abcdef"
 domain               = "example.com"
 budget_subdomain     = "budget"
 mcp_subdomain        = "mcp-budget"   # AI-facing MCP server host (ADR-0002); NOT behind Access
-actual_api_subdomain = "actual-api"   # Actual HTTP REST API sidecar; NOT behind Access
+actual_api_subdomain = "api-money"    # Actual HTTP REST API sidecar; NOT behind Access
 
 family_emails = [
   "you@gmail.com",
