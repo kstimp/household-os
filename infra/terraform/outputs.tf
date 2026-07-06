@@ -80,3 +80,26 @@ output "r2_bucket" {
   description = "Backup bucket name for Litestream + weekly Actual exports."
   value       = cloudflare_r2_bucket.backups.name
 }
+
+output "college_url" {
+  description = "Where the College Fund App will live once Caddy + the container are up."
+  value       = "https://${local.college_host}"
+}
+
+output "college_host" {
+  description = "Public hostname College Fund is served at. Used to fill the Caddyfile placeholder."
+  value       = local.college_host
+}
+
+output "college_origin_cert_pem" {
+  description = "Cloudflare Origin certificate for college host — write to certs/college-origin.pem on the box."
+  value       = cloudflare_origin_ca_certificate.college.certificate
+  sensitive   = true
+}
+
+output "college_origin_key_pem" {
+  description = "Origin private key for college host — write to certs/college-origin.key on the box (chmod 600)."
+  value       = tls_private_key.college_origin.private_key_pem
+  sensitive   = true
+}
+
