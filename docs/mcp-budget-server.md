@@ -512,8 +512,7 @@ Then reconfigure client connectors to use the Bearer token header again.
   update the connector. Do this if a device with the token is lost.
 - **Logs:** `docker compose logs -f actual-mcp`. Set `MCP_BRIDGE_STORE_LOGS=true`
   in `mcp.env` for file logging if you want persistence.
-- **Upgrades:** `docker compose pull actual-mcp && docker compose up -d actual-mcp`
-  (after reviewing the release) — re-run the smoke test afterward.
+- **Upgrades:** Refer to [`runbook-mcp-updates.md`](runbook-mcp-updates.md) for the complete procedure to update the container version, pull, restart, and run verification smoke tests.
 
 ## Troubleshooting
 
