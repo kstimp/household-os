@@ -7,7 +7,7 @@
 
 This covers updating the **Actual Budget server** container. It does **not** cover OS
 patches (see [`runbook-os-updates.md`](runbook-os-updates.md)) or the MCP budget server,
-which is a separate release track — see [§4](#4--the-mcp-server-caveat-read-before-you-update).
+which is a separate release track — see [§4](#4--the-mcp-server-caveat-read-before-you-update) and [`runbook-mcp-updates.md`](runbook-mcp-updates.md).
 
 ---
 
@@ -179,8 +179,8 @@ Keep these facts in mind when updating Actual:
   accounts and this month's balances."
 - **If the MCP server breaks after an Actual update,** first roll Actual back
   ([§3](#3--rollback-plan)). If it still misbehaves, updating the MCP server itself may be
-  required — that's its own procedure with its own auth re-verification, in
-  [`mcp-budget-server.md` → Operations → Upgrades](mcp-budget-server.md#operations). Do
+  required — see the step-by-step update and verification procedure in
+  [`runbook-mcp-updates.md`](runbook-mcp-updates.md). Do
   **not** bump both at once; change one variable at a time so you know what broke.
 - **The MCP container is already pinned** (to `:develop` per the ADR-0004 supply-chain note
   in `docker-compose.yml`), so it will not drift on its own during an Actual update.
