@@ -533,3 +533,165 @@ footer b {
   text-align: center;
   padding: 12px 0;
 }
+
+/* Chart Header and Tooltip Styling */
+.chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.chart-header h2 {
+  margin: 0;
+}
+.chart-tooltip {
+  background: rgba(22, 33, 46, 0.9);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  z-index: 10;
+  transition: opacity 0.1s ease-out, transform 0.1s ease-out;
+}
+.tooltip-date {
+  font-weight: 600;
+  color: var(--muted);
+  font-family: 'Inter', sans-serif;
+  margin-bottom: 2px;
+}
+.tooltip-val {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--gold);
+}
+.tooltip-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--faint);
+  margin-top: 2px;
+}
+
+/* Glassmorphic Modal Overlay and Card */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(14, 22, 32, 0.7);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease-out;
+}
+.modal-overlay.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+.modal-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  width: 90%;
+  max-width: 480px;
+  padding: 24px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+  transform: scale(0.95);
+  transition: transform 0.2s ease-out;
+}
+.modal-overlay.show .modal-card {
+  transform: scale(1);
+}
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.modal-header h3 {
+  font-family: 'Space Grotesk';
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+}
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 24px;
+  cursor: pointer;
+  padding: 4px;
+  line-height: 1;
+  transition: color 0.15s;
+}
+.modal-close:hover {
+  color: var(--text);
+}
+.modal-intro {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 20px;
+  line-height: 1.5;
+}
+.targets-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.targets-table th {
+  text-align: left;
+  color: var(--faint);
+  font-weight: 500;
+  font-size: 11px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.targets-table td {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+}
+.targets-table tr:last-child td {
+  border-bottom: none;
+}
+.targets-table td.num {
+  font-family: 'IBM Plex Mono';
+  text-align: right;
+  font-weight: 600;
+}
+.status-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.status-badge.pre-college {
+  background: rgba(73, 210, 194, 0.12);
+  color: var(--teal);
+}
+.status-badge.in-college {
+  background: rgba(232, 176, 75, 0.12);
+  color: var(--gold);
+}
+.status-badge.graduation {
+  background: rgba(142, 161, 181, 0.12);
+  color: var(--muted);
+}

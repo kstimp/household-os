@@ -45,8 +45,14 @@
       </div>
 
       <div class="card chart-card">
-        <h2>Projected 529 balance</h2>
-        <svg id="chart" viewBox="0 0 640 240"></svg>
+        <div class="chart-header">
+          <h2>Projected 529 balance</h2>
+          <button id="viewTargetsBtn" class="btn mini ghost">Yearly Targets</button>
+        </div>
+        <div style="position: relative;">
+          <svg id="chart" viewBox="0 0 640 240"></svg>
+          <div id="chart-tooltip" class="chart-tooltip" style="display: none; position: absolute; pointer-events: none;"></div>
+        </div>
         <div class="legend">
           <span><span class="dot" style="background:#2e8b83"></span>Actual (saved reviews)</span>
           <span><span class="dot" style="background:var(--teal)"></span>Plan forward</span>
@@ -139,6 +145,31 @@
   </footer>
 </div>
 
-<script src="app.js"></script>
+  <!-- Modal for Yearly Targets -->
+  <div id="targetsModal" class="modal-overlay" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Projected Balances by Year</h3>
+        <button id="closeTargetsBtn" class="modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-intro">Below are the projected balances at the end of each calendar year (December) to help you set and track your savings goals.</p>
+        <table class="targets-table">
+          <thead>
+            <tr>
+              <th>Year</th>
+              <th>Status</th>
+              <th class="num" style="text-align: right;">Projected Balance</th>
+            </tr>
+          </thead>
+          <tbody id="targetsTableBody">
+            <!-- Populated by JS -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
 </body>
 </html>
