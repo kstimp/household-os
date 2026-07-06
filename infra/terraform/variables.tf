@@ -52,6 +52,17 @@ variable "mcp_subdomain" {
   default     = "mcp-budget"
 }
 
+variable "actual_api_subdomain" {
+  description = <<-EOT
+    Subdomain the Actual HTTP REST API sidecar is served at. Final host =
+    <actual_api_subdomain>.<domain>. Like the MCP host, this is NOT behind Cloudflare
+    Access — programmatic API clients can't do browser SSO. The gate is the API_KEY
+    in actual-http-api.env. See docs/install-actual-http-api.md.
+  EOT
+  type        = string
+  default     = "actual-api"
+}
+
 # ---- Access control -------------------------------------------------------
 
 variable "enable_mcp_access_service_token" {

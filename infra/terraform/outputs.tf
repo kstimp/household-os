@@ -76,6 +76,28 @@ output "mcp_access_application_aud" {
   value       = one(cloudflare_zero_trust_access_application.mcp[*].aud)
 }
 
+output "actual_api_url" {
+  description = "Where the Actual HTTP REST API will live once deployed."
+  value       = "https://${local.actual_api_host}"
+}
+
+output "actual_api_host" {
+  description = "Public hostname for the Actual HTTP API. Used to fill the Caddyfile placeholder."
+  value       = local.actual_api_host
+}
+
+output "actual_api_origin_cert_pem" {
+  description = "Cloudflare Origin certificate for the Actual API host — write to certs/actual-api-origin.pem on the box."
+  value       = cloudflare_origin_ca_certificate.actual_api.certificate
+  sensitive   = true
+}
+
+output "actual_api_origin_key_pem" {
+  description = "Origin private key for the Actual API host — write to certs/actual-api-origin.key on the box (chmod 600)."
+  value       = tls_private_key.actual_api_origin.private_key_pem
+  sensitive   = true
+}
+
 output "r2_bucket" {
   description = "Backup bucket name for Litestream + weekly Actual exports."
   value       = cloudflare_r2_bucket.backups.name
