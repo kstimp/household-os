@@ -30,14 +30,36 @@ function monthlyRate(m, rs, re, N){        // linear glide across the remaining 
 }
 
 // simulate from a review date over N remaining months, then 4 college draws
+/**
+ * Simulates the 529 balance from review date to graduation.
+ *
+ * Runs monthly projections for the pre-college saving period and the in-college
+ * drawdown period, taking into account monthly contributions, glided rate of
+ * return, annual college cost drawdowns, and optional cash flow support.
+ *
+ * Args:
+ *   bal: The current starting 529 balance.
+ *   monthly: The solved monthly contribution amount.
+ *   infl: The annual inflation rate for college costs.
+ *   rs: The starting rate of return at review date.
+ *   re: The ending rate of return at enrollment.
+ *   inCollege: The monthly cash flow contributed during college.
+ *   loanPerYear: The annual Parent PLUS loan amount borrowed.
+ *   N: Number of months remaining until matriculation.
+ *   start: Decimal starting year representation of the review date.
+ *
+ * Returns:
+ *   An object containing leftover balance, the simulation series array, the
+ *   matriculation balance, total user contributions, and total withdrawals.
+ */
 function simulate(bal, monthly, infl, rs, re, inCollege, loanPerYear, N, start){
   loanPerYear = loanPerYear || 0;
   let b = bal, contributed = 0, withdrawn = 0;
-  const series = [{t:start, bal:b}];
+  const series = [{t:start, bal:b, type:'current'}];
   for(let m=0; m<N; m++){
     b += monthly; contributed += monthly;
     b *= monthlyRate(m, rs, re, N);
-    series.push({t:start+(m+1)/12, bal:b});
+    series.push({t:start+(m+1)/12, bal:b, type:'plan'});
   }
   const matric = b;
   const yc = costs(infl);
@@ -46,9 +68,11 @@ function simulate(bal, monthly, infl, rs, re, inCollege, loanPerYear, N, start){
     const t0 = yr + DRAW_OFF;
     const draw = Math.max(yc[i] - loanPerYear, 0);   // loans cover part of the bill
     b -= draw; withdrawn += draw;
-    series.push({t:t0, bal:b});
-    for(let k=0;k<12;k++){ b += inCollege; contributed += inCollege; b *= mrC; }
-    series.push({t:t0+1, bal:b});
+    series.push({t:t0, bal:b, type:'drawdown'});
+    for(let k=0;k<12;k++){
+      b += inCollege; contributed += inCollege; b *= mrC;
+      series.push({t:t0+(k+1)/12, bal:b, type:'drawdown'});
+    }
   });
   return {leftover:b, series, matric, contributed, withdrawn};
 }
@@ -69,10 +93,19 @@ function loanCost(netTotal, rate){
   return {gross, atGrad, monthly:pmt, interest:pmt*n - gross};
 }
 
+/**
+ * Draws the projected 529 balance chart onto the SVG canvas.
+ *
+ * Args:
+ *   series: Array of projected balance data points.
+ *   history: Array of historical review data points.
+ *   curT: Decimal year of the current review.
+ *   curBal: Current balance amount.
+ */
 function drawChart(series, history, curT, curBal){
   const svg = $('chart');
   const W=640,H=240,padL=52,padR=12,padT=14,padB=26;
-  const allPts = series.concat(history, [{t:curT,bal:curBal}]);
+  const allPts = series.concat(history, [{t:curT,bal:curBal,type:'current'}]);
   const xs = allPts.map(p=>p.t), ys = allPts.map(p=>p.bal);
   const xMin = Math.min(...xs), xMax = Math.max(...series.map(p=>p.t));
   const yMax = Math.max(...ys)*1.08, yMin = Math.min(0,...ys);
@@ -109,9 +142,239 @@ function drawChart(series, history, curT, curBal){
   history.forEach(p=>{ dots += `<circle cx="${X(p.t)}" cy="${Y(p.bal)}" r="4" fill="#2e8b83" stroke="#0e1620" stroke-width="1.5"/>`; });
   dots += `<circle cx="${X(curT)}" cy="${Y(curBal)}" r="4.5" fill="#fff" stroke="#0e1620" stroke-width="1.5"/>`;
 
+  // Create placeholder guide elements for mouse hover
+  const hoverElements = `
+    <line id="chart-hover-line" x1="0" y1="${padT}" x2="0" y2="${H-padB}" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="3,3" style="opacity:0; pointer-events:none;"></line>
+    <circle id="chart-hover-dot" cx="0" cy="0" r="6" fill="var(--teal)" stroke="#fff" stroke-width="2" style="opacity:0; pointer-events:none;"></circle>
+  `;
+
   svg.innerHTML = g
     + `<line x1="${padL}" y1="${zeroY}" x2="${W-padR}" y2="${zeroY}" stroke="#3a4d61" stroke-width="1"/>`
-    + lines + dots;
+    + lines + dots + hoverElements;
+
+  // Stash data for the event listeners
+  window._lastSeries = series;
+  window._lastHistory = history;
+  window._lastCurT = curT;
+  window._lastCurBal = curBal;
+}
+
+/**
+ * Formats a decimal year representation to a "Month Year" string.
+ *
+ * Args:
+ *   t: The decimal year value.
+ *
+ * Returns:
+ *   Formatted string like "Jul 2026".
+ */
+function formatDecimalYear(t) {
+  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const y = Math.floor(t);
+  const m = Math.round((t - y) * 12) + 1;
+  const adjustedY = m > 12 ? y + 1 : y;
+  const adjustedM = m > 12 ? 1 : m;
+  return monthNames[adjustedM - 1] + " " + adjustedY;
+}
+
+/**
+ * Sets up mouse hover event listeners on the projected 529 balance chart.
+ */
+function setupChartHover() {
+  const svg = $('chart');
+  const tooltip = $('chart-tooltip');
+  const TYPE_LABELS = {
+    history: 'Actual Review',
+    current: 'Current State',
+    plan: 'Projected (Saving)',
+    drawdown: 'Projected (College)'
+  };
+  
+  svg.addEventListener('mousemove', (e) => {
+    if (!window._lastSeries) return;
+    
+    const rect = svg.getBoundingClientRect();
+    const mouseX = ((e.clientX - rect.left) / rect.width) * 640;
+    
+    const padL = 52, padR = 12, padT = 14, padB = 26;
+    const series = window._lastSeries;
+    const history = window._lastHistory || [];
+    const curT = window._lastCurT;
+    const curBal = window._lastCurBal;
+    
+    const allPts = series.concat(history, [{ t: curT, bal: curBal, type: 'current' }]);
+    const xs = allPts.map(p => p.t);
+    const xMin = Math.min(...xs);
+    const xMax = Math.max(...series.map(p => p.t));
+    
+    const t = xMin + ((mouseX - padL) / (640 - padL - padR)) * (xMax - xMin);
+    
+    let closestPt = null;
+    let minDiff = Infinity;
+    allPts.forEach(p => {
+      const diff = Math.abs(p.t - t);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestPt = p;
+      }
+    });
+    
+    const hoverLine = $('chart-hover-line');
+    const hoverDot = $('chart-hover-dot');
+    
+    if (closestPt && mouseX >= padL && mouseX <= 640 - padR) {
+      const X = val => padL + ((val - xMin) / (xMax - xMin)) * (640 - padL - padR);
+      const Y = val => {
+        const ys = allPts.map(p => p.bal);
+        const yMax = Math.max(...ys) * 1.08;
+        const yMin = Math.min(0, ...ys);
+        return padT + (1 - (val - yMin) / (yMax - yMin)) * (240 - padT - padB);
+      };
+      
+      const cx = X(closestPt.t);
+      const cy = Y(closestPt.bal);
+      
+      if (hoverLine) {
+        hoverLine.setAttribute('x1', cx);
+        hoverLine.setAttribute('x2', cx);
+        hoverLine.style.opacity = 1;
+      }
+      
+      if (hoverDot) {
+        let dotColor = 'var(--teal)';
+        if (closestPt.type === 'history') {
+          dotColor = '#2e8b83';
+        } else if (closestPt.type === 'drawdown') {
+          dotColor = 'var(--gold)';
+        } else if (closestPt.type === 'current') {
+          dotColor = '#fff';
+        }
+        hoverDot.setAttribute('cx', cx);
+        hoverDot.setAttribute('cy', cy);
+        hoverDot.setAttribute('fill', dotColor);
+        hoverDot.style.opacity = 1;
+      }
+      
+      const dateStr = formatDecimalYear(closestPt.t);
+      const balStr = fmt(closestPt.bal);
+      const labelStr = TYPE_LABELS[closestPt.type] || '';
+      
+      tooltip.innerHTML = `
+        <div class="tooltip-date">${dateStr}</div>
+        <div class="tooltip-val">${balStr}</div>
+        <div class="tooltip-label">${labelStr}</div>
+      `;
+      tooltip.style.display = 'block';
+      
+      const svgRect = svg.getBoundingClientRect();
+      const parentRect = svg.parentElement.getBoundingClientRect();
+      
+      const tooltipX = (cx / 640) * svgRect.width;
+      const tooltipY = (cy / 240) * svgRect.height;
+      
+      tooltip.style.left = `${tooltipX}px`;
+      tooltip.style.top = `${tooltipY - 8}px`;
+      tooltip.style.transform = 'translate(-50%, -100%)';
+    } else {
+      hideTooltip();
+    }
+  });
+  
+  svg.addEventListener('mouseleave', hideTooltip);
+  
+  function hideTooltip() {
+    const hoverLine = $('chart-hover-line');
+    const hoverDot = $('chart-hover-dot');
+    if (hoverLine) hoverLine.style.opacity = 0;
+    if (hoverDot) hoverDot.style.opacity = 0;
+    tooltip.style.display = 'none';
+  }
+}
+
+/**
+ * Calculates yearly target balances and renders the targets table.
+ *
+ * Args:
+ *   series: The simulated timeline data series.
+ *   start: The decimal year of the review start.
+ */
+function renderYearlyTargets(series, start) {
+  const startYear = Math.floor(start);
+  const endYear = 2043;
+  const tbody = $('targetsTableBody');
+  let rowsHtml = '';
+  
+  for (let yr = startYear; yr < endYear; yr++) {
+    const targetT = yr + 11/12;
+    let closestPt = null;
+    let minDiff = Infinity;
+    
+    series.forEach(p => {
+      const diff = Math.abs(p.t - targetT);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestPt = p;
+      }
+    });
+    
+    if (closestPt && minDiff < 0.05) {
+      const isCollege = yr >= MATRIC_Y;
+      const badgeClass = isCollege ? 'in-college' : 'pre-college';
+      const badgeText = isCollege ? 'College Drawdown' : 'Accumulation';
+      
+      rowsHtml += `
+        <tr>
+          <td>December ${yr}</td>
+          <td><span class="status-badge ${badgeClass}">${badgeText}</span></td>
+          <td class="num">${fmt(closestPt.bal)}</td>
+        </tr>
+      `;
+    }
+  }
+  
+  if (series.length > 0) {
+    rowsHtml += `
+      <tr>
+        <td>Graduation (Aug 2043)</td>
+        <td><span class="status-badge graduation">Graduation</span></td>
+        <td class="num">${fmt(series[series.length - 1].bal)}</td>
+      </tr>
+    `;
+  }
+  
+  tbody.innerHTML = rowsHtml;
+}
+
+/**
+ * Sets up event listeners for opening, closing, and dismissing the yearly targets modal.
+ */
+function setupTargetsModal() {
+  const modal = $('targetsModal');
+  const openBtn = $('viewTargetsBtn');
+  const closeBtn = $('closeTargetsBtn');
+  
+  openBtn.onclick = () => {
+    modal.style.display = 'flex';
+    modal.offsetHeight; // force reflow
+    modal.classList.add('show');
+  };
+  
+  const hideModal = () => {
+    modal.classList.remove('show');
+    setTimeout(() => {
+      if (!modal.classList.contains('show')) {
+        modal.style.display = 'none';
+      }
+    }, 200);
+  };
+  
+  closeBtn.onclick = hideModal;
+  
+  modal.onclick = (e) => {
+    if (e.target === modal) {
+      hideModal();
+    }
+  };
 }
 
 function render(){
@@ -181,8 +444,9 @@ function render(){
   rows += `<div class="row total"><span class="yr">4-year total</span><span class="amt">${fmt(yc.reduce((a,b)=>a+b,0))}</span></div>`;
   $('costRows').innerHTML = rows;
 
-  const history = reviews.map(r => ({ t: ymToT(r.date), bal: r.balance }));
+  const history = reviews.map(r => ({ t: ymToT(r.date), bal: r.balance, type: 'history' }));
   drawChart(sim.series, history, start, bal);
+  renderYearlyTargets(sim.series, start);
   window._cur = {date:$('review').value, balance:bal, scenario, monthly:Math.round(monthly)};
 }
 
@@ -402,6 +666,8 @@ async function init() {
     loadAndRenderReviews(),
     loadAndRenderPlans()
   ]);
+  setupChartHover();
+  setupTargetsModal();
   render();
 }
 
