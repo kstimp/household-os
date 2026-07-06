@@ -13,21 +13,31 @@ Follow these steps for the first-time setup of the subdomain, certificates, appl
 
 ### 1a. Apply Terraform changes (locally)
 Run Terraform from your local machine to create the DNS records, Cloudflare Zero Trust Access configurations, and generated Origin TLS certificates:
+
+**bash (macOS/Linux):**
 ```bash
 cd infra/terraform
 terraform apply
-```
-When prompted, confirm with `yes`. Note down the outputs and extract the certificates:
-```bash
 # Retrieve certs from local state and write to temporary files
 terraform output -raw college_origin_cert_pem > college-origin.pem
 terraform output -raw college_origin_key_pem > college-origin.key
 ```
 
+**PowerShell 7 (Windows):**
+```powershell
+cd infra/terraform
+terraform apply
+# Retrieve certs from local state and write to temporary files
+terraform output -raw college_origin_cert_pem > $env:TEMP\college-origin.pem
+terraform output -raw college_origin_key_pem  > $env:TEMP\college-origin.key
+```
+
 ### 1b. Prepare VPS directories and copy files
 On your local machine, run the following to copy the application code, docker compose configs, and backup scripts to the VPS:
+
+**bash (macOS/Linux):**
 ```bash
-# Define your server IP (or pull dynamically from terraform output)
+# Define your server IP
 IP=$(cd infra/terraform && terraform output -raw server_ipv4)
 
 # Create folders on the VPS
@@ -46,6 +56,32 @@ scp -r infra/college/* root@$IP:/opt/household-os/college/
 
 # Sync updated deployment configs
 scp infra/actual/docker-compose.yml infra/actual/Caddyfile infra/actual/backup.sh infra/actual/restore.sh root@$IP:/opt/household-os/actual/
+```
+
+**PowerShell 7 (Windows):**
+```powershell
+# Define your server IP
+$IP = terraform -chdir=infra/terraform output -raw server_ipv4
+
+# Create folders on the VPS
+ssh root@$IP "mkdir -p /opt/household-os/college /opt/household-os/actual/certs"
+
+# Copy SSL certificates (braces around IP are required to prevent drive conflicts)
+scp $env:TEMP\college-origin.pem root@${IP}:/opt/household-os/actual/certs/college-origin.pem
+scp $env:TEMP\college-origin.key root@${IP}:/opt/household-os/actual/certs/college-origin.key
+ssh root@$IP "chmod 600 /opt/household-os/actual/certs/college-origin.key"
+
+# Clean up local temporary certificate files
+Remove-Item $env:TEMP\college-origin.pem, $env:TEMP\college-origin.key
+
+# Sync application source code (uses backslashes locally)
+scp -r infra\college\* root@${IP}:/opt/household-os/college/
+
+# Sync updated deployment configs
+scp infra\actual\docker-compose.yml root@${IP}:/opt/household-os/actual/docker-compose.yml
+scp infra\actual\Caddyfile root@${IP}:/opt/household-os/actual/Caddyfile
+scp infra\actual\backup.sh root@${IP}:/opt/household-os/actual/backup.sh
+scp infra\actual\restore.sh root@${IP}:/opt/household-os/actual/restore.sh
 ```
 
 ### 1c. Replace domain placeholder and launch
@@ -71,6 +107,7 @@ docker compose logs caddy
 
 When you make changes to the frontend (`public/`) or backend (`src/`) code and want to deploy them:
 
+**bash (macOS/Linux):**
 ```bash
 IP=$(cd infra/terraform && terraform output -raw server_ipv4)
 
@@ -81,16 +118,28 @@ scp infra/actual/docker-compose.yml root@$IP:/opt/household-os/actual/
 # 2. SSH into VPS, rebuild and restart
 ssh root@$IP
 cd /opt/household-os/actual
-
-# Rebuild the Docker image
 docker compose build college-app
-
-# Re-create only the college-app container (Caddy, actual-server remain online)
 docker compose up -d college-app
-
-# Verify it started successfully
 docker compose ps college-app
 docker compose logs college-app
+```
+
+**PowerShell 7 (Windows):**
+```powershell
+$IP = terraform -chdir=infra/terraform output -raw server_ipv4
+
+# 1. Sync updated files to the VPS (overwriting old files)
+scp -r infra\college\* root@${IP}:/opt/household-os/college/
+scp infra\actual\docker-compose.yml root@${IP}:/opt/household-os/actual/docker-compose.yml
+
+# 2. SSH into VPS, rebuild and restart
+ssh root@$IP
+# (On the VPS remote shell):
+# cd /opt/household-os/actual
+# docker compose build college-app
+# docker compose up -d college-app
+# docker compose ps college-app
+# docker compose logs college-app
 ```
 
 ---
