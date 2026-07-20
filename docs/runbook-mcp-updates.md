@@ -52,10 +52,10 @@ Modify the image configuration on the server to point to the new version tag.
 # Still in /opt/household-os/actual on the server.
 
 # 2a. Update the image tag in docker-compose.yml
-# Change:
-#     image: ghcr.io/agigante80/actual-mcp-server:develop
+# Change (current pin is 0.8.16):
+#     image: ghcr.io/agigante80/actual-mcp-server:0.8.16
 # To:
-#     image: ghcr.io/agigante80/actual-mcp-server:X.Y.Z   # Target tag (e.g., 0.8.16)
+#     image: ghcr.io/agigante80/actual-mcp-server:X.Y.Z   # Target tag
 nano docker-compose.yml
 
 # 2b. Pull the new image

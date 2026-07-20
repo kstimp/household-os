@@ -84,6 +84,61 @@ variable "enable_mcp_access_service_token" {
   default     = false
 }
 
+variable "enable_mcp_saas_oidc" {
+  description = <<-EOT
+    ADR-0005 (the decision): stand up a Cloudflare Access **SaaS** application (OIDC
+    protocol) to act as the MCP server's OIDC issuer. This is the recommended per-user
+    auth path — CF Access is the IdP (issuer https://<team>.cloudflareaccess.com), the
+    family allowlist lives in ONE place (the CF Access policy, not duplicated into
+    AUTH_BUDGET_ACL), JWKS is same-origin, and access/refresh token lifetimes are
+    configurable to "stop re-auth prompts."
+
+    This is a SaaS (OIDC) app, NOT the self-hosted app that failed in ADR-0003, and NOT
+    the same thing as var.enable_mcp_access_service_token (ADR-0003's interim edge
+    service-token layer). It leaves the MCP origin's proxied DNS record untouched — auth
+    happens out of band at the CF SaaS endpoints via the OAuth 2.1 PKCE flow.
+
+    Defaults OFF: enabling it creates the SaaS app + client credentials. Turn on at
+    cutover (docs/mcp-budget-server.md §7), after which you copy the client ID/secret
+    into mcp.env and flip AUTH_PROVIDER=oidc. Requires var.mcp_oauth_redirect_uris.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "mcp_oauth_redirect_uris" {
+  description = <<-EOT
+    OAuth redirect/callback URIs registered on the MCP SaaS-OIDC app (ADR-0005), one per
+    AI client that connects (Claude.ai, Desktop, Code). Only used when
+    var.enable_mcp_saas_oidc is true. Exact URIs vary by client version — start from the
+    client's connector docs (e.g. https://claude.ai/api/mcp/auth_callback) and extend.
+  EOT
+  type        = list(string)
+  default     = []
+}
+
+variable "mcp_oidc_access_token_lifetime" {
+  description = <<-EOT
+    Access-token lifetime for the MCP SaaS-OIDC app (ADR-0005). Keep this SHORT — a
+    long-lived access token on a write-capable financial endpoint enlarges the leak
+    blast-radius. Durability comes from the refresh token, not a long access token.
+    Format like "30m", "1h". Only used when var.enable_mcp_saas_oidc is true.
+  EOT
+  type        = string
+  default     = "30m"
+}
+
+variable "mcp_oidc_refresh_token_lifetime" {
+  description = <<-EOT
+    Refresh-token lifetime for the MCP SaaS-OIDC app (ADR-0005). This is the durable,
+    revocable credential that lets clients silently refresh without a new login prompt —
+    the direct lever for "stop re-auth prompts." Format like "720h" (30 days). Only used
+    when var.enable_mcp_saas_oidc is true.
+  EOT
+  type        = string
+  default     = "720h"
+}
+
 variable "family_emails" {
   description = "Allowlisted Google account emails that may reach Actual via Cloudflare Access."
   type        = list(string)

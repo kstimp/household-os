@@ -326,6 +326,85 @@ resource "cloudflare_zero_trust_access_policy" "mcp_bypass" {
 }
 
 # ---------------------------------------------------------------------------
+# ADR-0005 (the decision): Cloudflare Access SaaS-OIDC application — the MCP
+# server's OIDC ISSUER.
+#
+# Both resources below are gated on var.enable_mcp_saas_oidc and default OFF.
+# This is the DECIDED per-user auth path (ADR-0005 supersedes ADR-0004's
+# Google-direct), distinct from every MCP block above it:
+#
+#   • Unlike the ADR-0003 service-token app (a SELF-HOSTED Access app on the MCP
+#     origin, gated on var.enable_mcp_access_service_token), this is a SaaS app
+#     of type = "saas" with auth_type = "oidc". A SaaS-OIDC app IS a full OIDC
+#     authorization server — it publishes authorization_endpoint / token_endpoint
+#     and a same-origin JWKS, and runs the OAuth 2.1 PKCE code flow Claude needs.
+#     The self-hosted mode that ADR-0003 tried has none of those (no token
+#     endpoint), which is why that attempt failed.
+#   • The MCP origin keeps NO self-hosted Access gate (ADR-0002 rule stands) —
+#     auth happens out of band at these SaaS endpoints, so a non-browser MCP
+#     client is never bounced to an interactive login page.
+#   • The family allowlist lives HERE (the policy below), enforced at login, so it
+#     is NOT duplicated into AUTH_BUDGET_ACL — that narrows to per-budget scoping.
+#
+# Issuer is https://<team>.cloudflareaccess.com; the app's client_id is the `aud`
+# the MCP server validates (OIDC_ACCEPTED_AUDIENCES). Copy client_id/secret from
+# the outputs into mcp.env at cutover (docs/mcp-budget-server.md §7).
+#
+# ⚠️ Confirm the saas_app OIDC schema against the pinned cloudflare provider
+# (4.52.x, see versions.tf / .terraform.lock.hcl) with `terraform validate`
+# before applying — the block's attribute names drift across provider versions.
+# ---------------------------------------------------------------------------
+
+resource "cloudflare_zero_trust_access_application" "mcp_saas_oidc" {
+  count      = var.enable_mcp_saas_oidc ? 1 : 0
+  account_id = var.cloudflare_account_id
+  name       = "Household OS — MCP (SaaS OIDC)"
+  type       = "saas"
+
+  # App session duration governs how long the login persists before a fresh
+  # interactive auth is required; the access/refresh token lifetimes below govern
+  # silent token refresh within that window. Both feed "stop re-auth prompts."
+  session_duration = var.access_session_duration
+
+  saas_app {
+    auth_type     = "oidc"
+    redirect_uris = var.mcp_oauth_redirect_uris
+    # openid + email: the MCP server keys AUTH_BUDGET_ACL off the email claim.
+    scopes = ["openid", "email"]
+    # authorization_code = the PKCE code flow; refresh_tokens = durable, revocable
+    # refresh for seamless sessions (ADR-0005 token-lifetime mechanics).
+    grant_types = ["authorization_code", "refresh_tokens"]
+
+    # Enable PKCE (ADR-0005). Claude presents a PKCE code challenge; allowing PKCE
+    # without requiring the client secret supports clients that register as public.
+    allow_pkce_without_client_secret = true
+
+    # Short access token + longer refresh token: durability without a long-lived
+    # access token on a write-capable financial endpoint.
+    access_token_lifetime = var.mcp_oidc_access_token_lifetime
+    refresh_token_options {
+      lifetime = var.mcp_oidc_refresh_token_lifetime
+    }
+  }
+}
+
+# Family allowlist for the SaaS-OIDC app — the SINGLE place the coarse family gate
+# lives on the CF path (reuses var.family_emails, same as the budget/college apps).
+# Enforced by CF Access at login, so AUTH_BUDGET_ACL is not the family gate here.
+resource "cloudflare_zero_trust_access_policy" "mcp_saas_family" {
+  count          = var.enable_mcp_saas_oidc ? 1 : 0
+  account_id     = var.cloudflare_account_id
+  application_id = cloudflare_zero_trust_access_application.mcp_saas_oidc[0].id
+  name           = "Family allowlist"
+  precedence     = 1
+  decision       = "allow"
+
+  include {
+    email = var.family_emails
+  }
+}
+
+# ---------------------------------------------------------------------------
 # Edge: Actual HTTP REST API sidecar (jhonderson/actual-http-api).
 #
 # Same pattern as the MCP host above — Cloudflare-proxied for TLS + WAF, but
