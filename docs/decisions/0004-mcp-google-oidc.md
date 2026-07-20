@@ -1,20 +1,20 @@
 # 0004 — MCP budget server: Google as direct OIDC issuer; Claude App enabled
 
-- **Status:** Accepted — issuer choice under re-evaluation by ADR-0005
+- **Status:** Superseded by ADR-0005 (issuer choice) — 2026-07-20
 - **Date:** 2026-06-22
 - **Deciders:** Household OS owner
 - **Related:** ADR-0002 (write-capable MCP server); ADR-0003 (Superseded — OIDC via
-  Cloudflare Access; see that ADR for failure details); ADR-0005 (re-evaluates the
-  issuer choice — CF Access *SaaS-OIDC* found viable after all); `docs/mcp-budget-server.md`;
+  Cloudflare Access; see that ADR for failure details); ADR-0005 (**supersedes this ADR's
+  issuer choice** — CF Access *SaaS-OIDC* found viable after all); `docs/mcp-budget-server.md`;
   `infra/actual/`
 
-> **Update (2026-07-20, ADR-0005):** the image pin cited below (`:v0.7.11`) is stale —
-> the deployed version is **`:0.8.16`**, and Google-direct additionally requires
-> **`OIDC_JWKS_TRUSTED_HOSTS=www.googleapis.com`** (cross-origin JWKS fix, upstream
-> #254/#255, shipped v0.8.1). ADR-0005 also revisits the core claim below that CF Access
-> is "permanently unworkable": that was true of CF's *self-hosted app* mode, but its
-> *SaaS-OIDC* mode is a full OIDC IdP and is the recommended path. This ADR's
-> Google-direct decision remains valid as the proven fallback.
+> **Superseded (2026-07-20, ADR-0005).** The issuer decision below is **replaced**: the
+> MCP server uses **Cloudflare Access SaaS-OIDC**, not Google-direct. ADR-0005 found the
+> "permanently unworkable" claim below was only true of CF's *self-hosted app* mode — its
+> *SaaS-OIDC* mode is a full OIDC IdP. Google-direct config is retained **only as the
+> rollback contingency** in ADR-0005. Also note the pin cited below (`:v0.7.11`) is stale
+> (deployed is `:0.8.16`), and Google-direct would additionally require
+> `OIDC_JWKS_TRUSTED_HOSTS=www.googleapis.com` (upstream #254/#255, shipped v0.8.1).
 
 ## Context
 

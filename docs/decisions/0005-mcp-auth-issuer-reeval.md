@@ -1,12 +1,12 @@
 # 0005 — MCP budget server: re-evaluate the OIDC issuer (Cloudflare Access SaaS-OIDC vs Google-direct)
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-07-20
 - **Deciders:** Household OS owner
 - **Related:** ADR-0002 (write-capable MCP server); ADR-0003 (Superseded — the failed
-  CF-Access-as-issuer attempt, re-examined here); ADR-0004 (Accepted — Google as direct
-  issuer; **this ADR revisits that issuer choice** and supersedes it if CF is adopted);
-  `docs/mcp-budget-server.md`; `infra/actual/`, `infra/terraform/`
+  CF-Access-as-issuer attempt, re-examined here); ADR-0004 (**Superseded by this ADR** —
+  Google as direct issuer, now demoted to rollback contingency); `docs/mcp-budget-server.md`;
+  `infra/actual/`, `infra/terraform/`
 - **Sources:**
   [CF generic OIDC SaaS app](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/saas-apps/generic-oidc-saas/),
   [CF "Secure MCP servers with Access for SaaS"](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/mcp-servers/saas-mcp/)
@@ -59,9 +59,9 @@ issuer is chosen, not a reason to prefer one.
 
 ## Decision
 
-**Recommended: pilot Cloudflare Access SaaS-OIDC as the primary issuer, keeping
-Google-direct (ADR-0004) as the already-validated fallback.** Both are gated by the
-same JWT-validation check. Concretely:
+**Adopt Cloudflare Access SaaS-OIDC as the MCP server's OIDC issuer.** This supersedes
+ADR-0004's Google-direct choice; Google-direct is retained only as the documented
+rollback contingency (below), not as a co-equal path. Concretely:
 
 1. **Stand up a CF Access *SaaS* application (OIDC protocol)** for the MCP server —
    *not* a self-hosted app. Issuer `https://<team>.cloudflareaccess.com`; copy its
@@ -69,7 +69,7 @@ same JWT-validation check. Concretely:
    from the app's config screen. Enable **PKCE**.
 2. **Attach a CF Access policy** with the family-email allowlist to that SaaS app, so
    the coarse allowlist stays **in one place** (CF), enforced during login — instead of
-   being duplicated into `AUTH_BUDGET_ACL` as Google-direct requires. Keep
+   being duplicated into `AUTH_BUDGET_ACL` as Google-direct required. Keep
    `AUTH_BUDGET_ACL` only for *per-budget* scoping, not as the family gate.
 3. **Enable Refresh tokens** on the SaaS app (Advanced settings) and set a **short
    access-token lifetime + longer refresh-token lifetime / app session duration** —
@@ -78,24 +78,25 @@ same JWT-validation check. Concretely:
 4. **Point the MCP server at the CF issuer:** `AUTH_PROVIDER=oidc`,
    `OIDC_ISSUER=https://<team>.cloudflareaccess.com`, `OIDC_ACCEPTED_AUDIENCES=<CF SaaS
    app client ID>`. JWKS is same-origin, so **no `OIDC_JWKS_TRUSTED_HOSTS` needed**.
-5. **Keep the reversible cutover principle:** run with `MCP_SSE_AUTHORIZATION` still
-   present until the CF path passes the acceptance criteria, then remove it. If the
-   shared JWT-vs-opaque check fails on CF and cannot be resolved, **fall back to the
-   already-de-risked Google-direct path** (ADR-0004) rather than blocking.
+5. **Cut over reversibly:** run with `MCP_SSE_AUTHORIZATION` still present until the CF
+   path passes the acceptance criteria, then remove it.
 
-If the owner instead prefers the shortest path to done, **Decision-Alt:** finish
-Google-direct (set `OIDC_JWKS_TRUSTED_HOSTS=www.googleapis.com`, publish the Google
-OAuth app to "In production" so refresh tokens stop expiring) and treat CF SaaS-OIDC
-as a later improvement. Either way this ADR **reaffirms leaving Actual Budget on CF
-Access** (ADR-0003 Decision 1 stands).
+This ADR also **reaffirms leaving Actual Budget on CF Access** (ADR-0003 Decision 1 stands).
+
+**Rollback contingency (not a second decision):** the one unresolved risk is the
+JWT-vs-opaque-token check shared by every issuer (below). If CF fails it and it cannot
+be resolved, revert `mcp.env` to the Google-direct block (set
+`OIDC_JWKS_TRUSTED_HOSTS=www.googleapis.com`, publish the Google OAuth app to "In
+production") as a temporary fallback while escalating to a self-hosted IdP that issues
+JWT access tokens. This is a rollback path, not an alternative worth re-litigating.
 
 ## Alternatives considered
 
 | Option | "Stop re-auth prompts" fit | Family allowlist | JWKS | Maturity here | Verdict |
 |---|---|---|---|---|---|
-| **CF Access SaaS-OIDC** (recommended primary) | ✅ configurable access + refresh lifetime + app session duration | ✅ one place — CF Access policy, enforced at login | same-origin (no extra config) | Unproven here — needs one correct-mode pilot | ✅ Best goal-fit, reuses the CF Zero Trust + Google-upstream identity already in the stack, CF-documented for MCP |
-| **Google-direct** (ADR-0004, fallback) | ⚠️ fixed 1h access token; relies on refresh + OAuth app in "production" | ❌ duplicated into `AUTH_BUDGET_ACL` | cross-origin — needs `OIDC_JWKS_TRUSTED_HOSTS=www.googleapis.com` | Blockers cleared; 0.8.16 deployed | ✅ Proven fallback; keep as the safety net |
-| **Auth0** | ✅ configurable | ❌ a new allowlist home | same-origin | New third-party SaaS dependency | ❌ Dominated by CF for this use case — CF gives the same configurability while reusing existing infra and unifying the allowlist. Only if a concrete CF/Google gap appears |
+| **CF Access SaaS-OIDC** | ✅ configurable access + refresh lifetime + app session duration | ✅ one place — CF Access policy, enforced at login | same-origin (no extra config) | Not yet deployed — validate on cutover | ✅ **Chosen.** Best goal-fit, reuses the CF Zero Trust + Google-upstream identity already in the stack, CF-documented for MCP |
+| **Google-direct** (ADR-0004) | ⚠️ fixed 1h access token; relies on refresh + OAuth app in "production" | ❌ duplicated into `AUTH_BUDGET_ACL` | cross-origin — needs `OIDC_JWKS_TRUSTED_HOSTS=www.googleapis.com` | Blockers cleared; 0.8.16 deployed | ❌ **Rejected as primary** (allowlist duplication + fixed 1h token). Retained only as the rollback contingency |
+| **Auth0** | ✅ configurable | ❌ a new allowlist home | same-origin | New third-party SaaS dependency | ❌ Dominated by CF — CF gives the same configurability while reusing existing infra and unifying the allowlist |
 | **Self-hosted IdP** (Casdoor / Authentik / Keycloak) | ✅ configurable; issues JWT *access* tokens (sidesteps the opaque-token risk) | own | own | New always-on service on the single Hetzner box (ADR-0001 SPOF) | ⚠️ Deferred — the escape hatch if the shared opaque-token risk bites both CF and Google |
 
 ## Token-lifetime / session-durability mechanics
@@ -116,7 +117,7 @@ Access** (ADR-0003 Decision 1 stands).
 
 ## Consequences
 
-**If CF SaaS-OIDC is adopted:**
+**From adopting CF SaaS-OIDC:**
 - **New Terraform:** a `cloudflare_zero_trust_access_application` of `type = "saas"`
   with an OIDC `saas_app` block + a `cloudflare_zero_trust_access_policy` for the
   allowlist. The client secret lands in `mcp.env` on the VPS (design §4.4). Confirm the
@@ -125,7 +126,8 @@ Access** (ADR-0003 Decision 1 stands).
   sync" consequence); `AUTH_BUDGET_ACL` narrows to per-budget scoping only.
 - **The MCP origin needs no self-hosted Access gate** — the SaaS app handles auth out of
   band; the CF proxy (WAF/TLS/rate-limiting) is unchanged.
-- ADR-0004 becomes **Superseded by ADR-0005** once the pilot passes.
+- **ADR-0004 is Superseded by this ADR.** Google-direct config remains documented only as
+  the rollback contingency.
 
 **Shared, regardless of issuer:**
 - `AUTH_PROVIDER=oidc` is a **hard flip** — no mixed Bearer/OIDC mode; all clients
@@ -135,13 +137,13 @@ Access** (ADR-0003 Decision 1 stands).
   self-hosted IdP that issues JWT access tokens, or a token-exchange proxy.
 - Reversible via `mcp.env` revert + `docker compose up -d actual-mcp`.
 
-**When to revisit:** if the CF pilot's JWT check fails → fall back to Google-direct; if
-both fail → self-hosted IdP; if multi-service SSO consolidation becomes a goal → promote
-to a self-hosted IdP for both Actual and MCP.
+**When to revisit:** if the CF cutover's JWT check fails → fall back to Google-direct per
+the rollback contingency; if both fail → self-hosted IdP; if multi-service SSO
+consolidation becomes a goal → promote to a self-hosted IdP for both Actual and MCP.
 
 ## Implementation appendix (seeds the build session)
 
-> Design-stage. Confirm upstream env-var names against the pinned image
+> This is the decided path. Confirm upstream env-var names against the pinned image
 > (`ghcr.io/agigante80/actual-mcp-server:0.8.16`) `docs/CONFIGURATION.md`, and the CF
 > resource schema against the provider in `versions.tf`, before applying.
 

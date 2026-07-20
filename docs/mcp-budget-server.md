@@ -76,10 +76,10 @@ here is the MCP server's own auth. Defense in depth, outermost to innermost:
 1. **Cloudflare proxy (orange cloud).** Hides the origin IP, terminates public
    TLS, and provides WAF + rate-limiting in front of the token. (Terraform sets
    `proxied = true` and creates an Origin cert.)
-2. **The MCP server's own auth gate — per-user OIDC/JWT** (ADR-0004/0005).
+2. **The MCP server's own auth gate — per-user OIDC/JWT** (ADR-0005).
    `AUTH_PROVIDER=oidc`, JWKS-validated (signature + issuer + audience), per-email
-   `AUTH_BUDGET_ACL`. Issuer is either CF Access SaaS-OIDC (recommended — allowlist stays
-   in the CF policy) or Google-direct (fallback); see "Auth" below. All clients
+   `AUTH_BUDGET_ACL`. The issuer is **CF Access SaaS-OIDC** (allowlist stays in the CF
+   policy); Google-direct is the documented rollback only — see "Auth" below. All clients
    authenticate via OAuth 2.1 PKCE. The interim Bearer token (`MCP_SSE_AUTHORIZATION`)
    is kept set until OIDC is verified end-to-end, then removed (see "Auth" and §7 below).
 3. **(Optional) Cloudflare Access service token.** A non-interactive header gate
@@ -102,9 +102,10 @@ Google-direct path the family allowlist lives in two places (CF Access for Actua
 
 The gate is **per-user OAuth 2.0 / OIDC**: the server validates every request's JWT
 (signature + issuer + audience) against the issuer's JWKS, and `AUTH_BUDGET_ACL` scopes
-each identity to budgets. Two issuer options — pick one:
+each identity to budgets. **The issuer is Cloudflare Access SaaS-OIDC (Option A, ADR-0005).**
+Option B (Google-direct) is retained only as the rollback contingency:
 
-- **OPTION A — Cloudflare Access SaaS-OIDC (recommended, ADR-0005).** CF Access acts as
+- **OPTION A — Cloudflare Access SaaS-OIDC (the decision, ADR-0005).** CF Access acts as
   the OIDC IdP via a **SaaS** application (issuer `https://<team>.cloudflareaccess.com`).
   This keeps the family allowlist in the **CF Access policy** (one place, not duplicated
   into `AUTH_BUDGET_ACL`), serves JWKS **same-origin** (no `OIDC_JWKS_TRUSTED_HOSTS`), and
@@ -123,7 +124,7 @@ each identity to budgets. Two issuer options — pick one:
   # keep MCP_SSE_AUTHORIZATION set during the cutover; remove it only after OIDC verifies
   ```
 
-- **OPTION B — Google-direct (fallback, ADR-0004).** `OIDC_ISSUER=https://accounts.google.com`.
+- **OPTION B — Google-direct (rollback contingency only, ADR-0004).** `OIDC_ISSUER=https://accounts.google.com`.
   Reuses Google identities directly, but the family allowlist must be replicated in
   `AUTH_BUDGET_ACL`, JWKS is **cross-origin** (so `OIDC_JWKS_TRUSTED_HOSTS` is required),
   and the token is a fixed 1h — seamlessness relies on refresh tokens, so **publish the
