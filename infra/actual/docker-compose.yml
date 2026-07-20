@@ -28,13 +28,12 @@ services:
   # non-browser client Access would otherwise block). Its own Bearer/OIDC token is
   # the gate. Secrets come from mcp.env (gitignored; copy from mcp.env.example).
   actual-mcp:
-    # Pinned to :develop (ADR-0002 supply-chain note; ADR-0004). The project's GHCR
-    # registry publishes latest/develop and SHA-pinned digests (latest-<sha>,
-    # development-<sha>); stable semver tags use 0.x.x format and top out at 0.4.2,
-    # which predates OIDC support. OIDC is confirmed only on the develop track.
-    # Revisit when a stable release that includes OIDC is published; pin to the
-    # 0.x.x semver tag or a latest-<sha> digest at that point.
-    image: ghcr.io/agigante80/actual-mcp-server:0.8.1
+    # Pinned to a reviewed semver tag (ADR-0002 supply-chain note; ADR-0004/0005).
+    # v0.8.16 is the deployed version; OIDC support landed in the 0.7.x line and the
+    # cross-origin JWKS fix (OIDC_JWKS_TRUSTED_HOSTS, needed for Google) shipped in
+    # v0.8.1 (upstream #254/#255). Bump deliberately after reading release notes and
+    # re-running the smoke + OIDC acceptance tests (docs/mcp-budget-server.md §7).
+    image: ghcr.io/agigante80/actual-mcp-server:v0.8.16
     restart: unless-stopped
     depends_on:
       - actual-server

@@ -13,7 +13,7 @@ This covers updating the **MCP Budget Server** (`ghcr.io/agigante80/actual-mcp-s
 The `actual-mcp` container holds critical credentials (your Actual Budget password and end-to-end encryption key) and has read/write access to your financial data. Do not treat updates casually.
 
 1. **Review Release Notes:** Check the [agigante80/actual-mcp-server releases/commits](https://github.com/agigante80/actual-mcp-server) first for any breaking changes, authentication schema updates, or new required environment variables.
-2. **Determine Target Tag:** Pin your image in `docker-compose.yml` to a specific version tag (e.g., `v0.7.11`) rather than leaving it on `develop` or `latest`. This ensures that updates are deliberate, reproducible, and tracked in git.
+2. **Determine Target Tag:** Pin your image in `docker-compose.yml` to a specific version tag (e.g., `v0.8.16`) rather than leaving it on `develop` or `latest`. This ensures that updates are deliberate, reproducible, and tracked in git.
 
 Set the server IP locally:
 
@@ -55,7 +55,7 @@ Modify the image configuration on the server to point to the new version tag.
 # Change:
 #     image: ghcr.io/agigante80/actual-mcp-server:develop
 # To:
-#     image: ghcr.io/agigante80/actual-mcp-server:vX.Y.Z   # Target tag (e.g., v0.7.11)
+#     image: ghcr.io/agigante80/actual-mcp-server:vX.Y.Z   # Target tag (e.g., v0.8.16)
 nano docker-compose.yml
 
 # 2b. Pull the new image

@@ -68,10 +68,12 @@ output "mcp_access_service_token_secret" {
 
 output "mcp_access_application_aud" {
   description = <<-EOT
-    Cloudflare Access application AUD tag for the MCP host (the `aud` claim in CF-issued
-    JWTs). Use this as OIDC_RESOURCE in mcp.env when AUTH_PROVIDER=oidc and
-    OIDC_ISSUER=https://<team>.cloudflareaccess.com. Empty unless
-    var.enable_mcp_access_service_token is true.
+    Cloudflare Access application AUD tag for the MCP host's self-hosted app (used with
+    the optional service-token layer). NOTE: this is NOT the OIDC issuer path. The
+    ADR-0003 idea of using this self-hosted app's JWT as the OIDC token failed (no
+    OAuth token endpoint). The viable CF-issuer path (ADR-0005) is a separate CF Access
+    *SaaS* (OIDC) application, whose own client ID is the `aud` — not this value. Empty
+    unless var.enable_mcp_access_service_token is true.
   EOT
   value       = one(cloudflare_zero_trust_access_application.mcp[*].aud)
 }
