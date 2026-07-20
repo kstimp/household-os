@@ -28,7 +28,7 @@ ADR-0004 moved the MCP server to **Google as the direct OIDC issuer**
 
 Also reconciled while here: there is **no Auth0** anywhere in the design (a prior
 recollection; repo-wide search finds zero references). The deployed MCP image is
-**v0.8.16**, which already contains the cross-origin JWKS fix
+**0.8.16**, which already contains the cross-origin JWKS fix
 (`OIDC_JWKS_TRUSTED_HOSTS`, upstream #254/#255, shipped v0.8.1) that Google-direct
 needs — the flag is simply opt-in and not yet set. The docs/compose still cite the
 stale `:v0.7.11`/`:develop` pin; ADR-0004's env block is otherwise current.
@@ -94,7 +94,7 @@ Access** (ADR-0003 Decision 1 stands).
 | Option | "Stop re-auth prompts" fit | Family allowlist | JWKS | Maturity here | Verdict |
 |---|---|---|---|---|---|
 | **CF Access SaaS-OIDC** (recommended primary) | ✅ configurable access + refresh lifetime + app session duration | ✅ one place — CF Access policy, enforced at login | same-origin (no extra config) | Unproven here — needs one correct-mode pilot | ✅ Best goal-fit, reuses the CF Zero Trust + Google-upstream identity already in the stack, CF-documented for MCP |
-| **Google-direct** (ADR-0004, fallback) | ⚠️ fixed 1h access token; relies on refresh + OAuth app in "production" | ❌ duplicated into `AUTH_BUDGET_ACL` | cross-origin — needs `OIDC_JWKS_TRUSTED_HOSTS=www.googleapis.com` | Blockers cleared; v0.8.16 deployed | ✅ Proven fallback; keep as the safety net |
+| **Google-direct** (ADR-0004, fallback) | ⚠️ fixed 1h access token; relies on refresh + OAuth app in "production" | ❌ duplicated into `AUTH_BUDGET_ACL` | cross-origin — needs `OIDC_JWKS_TRUSTED_HOSTS=www.googleapis.com` | Blockers cleared; 0.8.16 deployed | ✅ Proven fallback; keep as the safety net |
 | **Auth0** | ✅ configurable | ❌ a new allowlist home | same-origin | New third-party SaaS dependency | ❌ Dominated by CF for this use case — CF gives the same configurability while reusing existing infra and unifying the allowlist. Only if a concrete CF/Google gap appears |
 | **Self-hosted IdP** (Casdoor / Authentik / Keycloak) | ✅ configurable; issues JWT *access* tokens (sidesteps the opaque-token risk) | own | own | New always-on service on the single Hetzner box (ADR-0001 SPOF) | ⚠️ Deferred — the escape hatch if the shared opaque-token risk bites both CF and Google |
 
@@ -142,7 +142,7 @@ to a self-hosted IdP for both Actual and MCP.
 ## Implementation appendix (seeds the build session)
 
 > Design-stage. Confirm upstream env-var names against the pinned image
-> (`ghcr.io/agigante80/actual-mcp-server:v0.8.16`) `docs/CONFIGURATION.md`, and the CF
+> (`ghcr.io/agigante80/actual-mcp-server:0.8.16`) `docs/CONFIGURATION.md`, and the CF
 > resource schema against the provider in `versions.tf`, before applying.
 
 **CF SaaS-OIDC setup:**
@@ -182,7 +182,7 @@ PKCE; (b) the agigante80 server validates the presented token via JWKS (JWT `id_
 not opaque); (c) after access-token expiry the client **silently refreshes with no new
 login prompt** — the true test of the goal.
 
-**Doc/config reconciliations shipped alongside this ADR:** version pin → `v0.8.16`
+**Doc/config reconciliations shipped alongside this ADR:** version pin → `0.8.16`
 across compose/docs; `OIDC_JWKS_TRUSTED_HOSTS` documented in the Google block of
 `mcp.env.example`; a CF SaaS-OIDC block added there; `infra/terraform/outputs.tf`
 `mcp_access_application_aud` help text corrected.

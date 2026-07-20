@@ -140,7 +140,7 @@ each identity to budgets. Two issuer options — pick one:
   # keep MCP_SSE_AUTHORIZATION set during the cutover; remove it only after OIDC verifies
   ```
 
-Var names are from agigante80/actual-mcp-server **v0.8.16** `docs/CONFIGURATION.md`.
+Var names are from agigante80/actual-mcp-server **0.8.16** `docs/CONFIGURATION.md`.
 
 > **Seamless sessions ("stop re-auth prompts").** The goal is *durability*, not longer
 > access tokens (a long-lived token on a write-capable finance endpoint enlarges the leak
@@ -532,7 +532,7 @@ Then reconfigure client connectors to use the Bearer token header again.
 
 ## Operations
 
-- **Pin the image.** The compose pins `actual-mcp` to `:v0.8.16` (off `:latest`) so
+- **Pin the image.** The compose pins `actual-mcp` to `:0.8.16` (off `:latest`) so
   an upstream change can't surprise a process holding your financial credentials —
   OIDC support landed in the 0.7.x line and the cross-origin JWKS fix
   (`OIDC_JWKS_TRUSTED_HOSTS`, needed for Google) shipped in v0.8.1 (upstream #254/#255).

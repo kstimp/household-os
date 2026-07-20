@@ -9,7 +9,7 @@
   `infra/actual/`
 
 > **Update (2026-07-20, ADR-0005):** the image pin cited below (`:v0.7.11`) is stale —
-> the deployed version is **`:v0.8.16`**, and Google-direct additionally requires
+> the deployed version is **`:0.8.16`**, and Google-direct additionally requires
 > **`OIDC_JWKS_TRUSTED_HOSTS=www.googleapis.com`** (cross-origin JWKS fix, upstream
 > #254/#255, shipped v0.8.1). ADR-0005 also revisits the core claim below that CF Access
 > is "permanently unworkable": that was true of CF's *self-hosted app* mode, but its

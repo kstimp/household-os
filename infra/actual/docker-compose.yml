@@ -29,11 +29,11 @@ services:
   # the gate. Secrets come from mcp.env (gitignored; copy from mcp.env.example).
   actual-mcp:
     # Pinned to a reviewed semver tag (ADR-0002 supply-chain note; ADR-0004/0005).
-    # v0.8.16 is the deployed version; OIDC support landed in the 0.7.x line and the
+    # 0.8.16 is the deployed version; OIDC support landed in the 0.7.x line and the
     # cross-origin JWKS fix (OIDC_JWKS_TRUSTED_HOSTS, needed for Google) shipped in
     # v0.8.1 (upstream #254/#255). Bump deliberately after reading release notes and
     # re-running the smoke + OIDC acceptance tests (docs/mcp-budget-server.md §7).
-    image: ghcr.io/agigante80/actual-mcp-server:v0.8.16
+    image: ghcr.io/agigante80/actual-mcp-server:0.8.16
     restart: unless-stopped
     depends_on:
       - actual-server

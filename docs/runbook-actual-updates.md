@@ -182,7 +182,7 @@ Keep these facts in mind when updating Actual:
   required — see the step-by-step update and verification procedure in
   [`runbook-mcp-updates.md`](runbook-mcp-updates.md). Do
   **not** bump both at once; change one variable at a time so you know what broke.
-- **The MCP container is already pinned** (to `:v0.8.16` per the ADR-0002/0004 supply-chain
+- **The MCP container is already pinned** (to `:0.8.16` per the ADR-0002/0004 supply-chain
   note in `docker-compose.yml`), so it will not drift on its own during an Actual update.
 
 ---
