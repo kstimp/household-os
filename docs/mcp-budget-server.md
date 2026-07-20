@@ -76,11 +76,12 @@ here is the MCP server's own auth. Defense in depth, outermost to innermost:
 1. **Cloudflare proxy (orange cloud).** Hides the origin IP, terminates public
    TLS, and provides WAF + rate-limiting in front of the token. (Terraform sets
    `proxied = true` and creates an Origin cert.)
-2. **The MCP server's own auth gate — per-user Google OIDC/JWT** (ADR-0004).
-   `AUTH_PROVIDER=oidc`, `OIDC_ISSUER=https://accounts.google.com`, JWKS-validated,
-   per-email `AUTH_BUDGET_ACL`. All clients authenticate via Google OAuth 2.1 PKCE.
-   The interim Bearer token (`MCP_SSE_AUTHORIZATION`) is kept set until OIDC is
-   verified end-to-end, then removed (see "Auth" and §7 below).
+2. **The MCP server's own auth gate — per-user OIDC/JWT** (ADR-0005).
+   `AUTH_PROVIDER=oidc`, JWKS-validated (signature + issuer + audience), per-email
+   `AUTH_BUDGET_ACL`. The issuer is **CF Access SaaS-OIDC** (allowlist stays in the CF
+   policy); Google-direct is the documented rollback only — see "Auth" below. All clients
+   authenticate via OAuth 2.1 PKCE. The interim Bearer token (`MCP_SSE_AUTHORIZATION`)
+   is kept set until OIDC is verified end-to-end, then removed (see "Auth" and §7 below).
 3. **(Optional) Cloudflare Access service token.** A non-interactive header gate
    at the edge (`CF-Access-Client-Id` / `CF-Access-Client-Secret`) in front of (2),
    added by `var.enable_mcp_access_service_token` (ADR-0003). Off by default.
@@ -89,36 +90,64 @@ here is the MCP server's own auth. Defense in depth, outermost to innermost:
 5. **Secrets stay on the VPS** (`mcp.env`, gitignored), never on family laptops —
    consistent with design §4.4.
 
-**Residual risks (accepted in ADR-0002, narrowed by ADR-0004):** a write-capable
+**Residual risks (accepted in ADR-0002, narrowed by ADR-0004/0005):** a write-capable
 financial endpoint is internet-reachable; third-party code holds the Actual password
-(and the E2E key if encryption is on). Under OIDC (ADR-0004), per-user Google identity
-+ short-lived tokens + `AUTH_BUDGET_ACL` replace the anonymous shared Bearer token.
-Residual: the family allowlist now lives in two places (CF Access for Actual, `AUTH_BUDGET_ACL`
-for MCP) — keep them in sync when adding users.
+(and the E2E key if encryption is on). Under OIDC, per-user identity + short-lived tokens
++ `AUTH_BUDGET_ACL` replace the anonymous shared Bearer token. Residual: on the
+Google-direct path the family allowlist lives in two places (CF Access for Actual,
+`AUTH_BUDGET_ACL` for MCP) — keep them in sync; the recommended CF Access SaaS-OIDC path
+(ADR-0005) removes this by keeping the allowlist in the CF Access policy for both.
 
-### Auth: per-user Google OIDC/JWT — ADR-0004
+### Auth: per-user OIDC/JWT — issuer options (ADR-0004 / ADR-0005)
 
-The gate is **per-user Google OAuth 2.0 / OIDC**, using
-**`OIDC_ISSUER=https://accounts.google.com`** so the existing Google identities (already
-used in CF Zero Trust) are the authoritative identity source — no new always-on identity
-provider. The server validates every request's JWT against Google's JWKS: signature +
-issuer + audience on every call. Per-email `AUTH_BUDGET_ACL` replaces the anonymous
-shared token with per-user scoping.
+The gate is **per-user OAuth 2.0 / OIDC**: the server validates every request's JWT
+(signature + issuer + audience) against the issuer's JWKS, and `AUTH_BUDGET_ACL` scopes
+each identity to budgets. **The issuer is Cloudflare Access SaaS-OIDC (Option A, ADR-0005).**
+Option B (Google-direct) is retained only as the rollback contingency:
 
-(CF Access as the OIDC issuer was attempted in ADR-0003 and found permanently unworkable.
-Google resolves all three blockers from that attempt — see ADR-0003 for details.)
+- **OPTION A — Cloudflare Access SaaS-OIDC (the decision, ADR-0005).** CF Access acts as
+  the OIDC IdP via a **SaaS** application (issuer `https://<team>.cloudflareaccess.com`).
+  This keeps the family allowlist in the **CF Access policy** (one place, not duplicated
+  into `AUTH_BUDGET_ACL`), serves JWKS **same-origin** (no `OIDC_JWKS_TRUSTED_HOSTS`), and
+  exposes **configurable access/refresh token lifetimes** — the lever for "stop re-auth
+  prompts." Note: this is a *SaaS* app, not the *self-hosted* app that failed in ADR-0003
+  (that mode has no OAuth token endpoint). CF documents this exact pattern
+  ([Secure MCP servers with Access for SaaS](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/mcp-servers/saas-mcp/)).
 
-Set in `mcp.env` (var names from agigante80/actual-mcp-server v0.7.11 `docs/CONFIGURATION.md`):
+  ```
+  AUTH_PROVIDER=oidc
+  OIDC_ISSUER=https://<team>.cloudflareaccess.com
+  OIDC_RESOURCE=https://<cf-saas-oidc-client-id>      # valid-URI form for mcp-auth
+  OIDC_ACCEPTED_AUDIENCES=<cf-saas-oidc-client-id>    # bare client ID — must match `aud`
+  OIDC_SCOPES=openid email
+  AUTH_BUDGET_ACL={"you@gmail.com":["<budget-sync-id>"]}  # per-BUDGET scoping (family gate = CF policy)
+  # keep MCP_SSE_AUTHORIZATION set during the cutover; remove it only after OIDC verifies
+  ```
 
-```
-AUTH_PROVIDER=oidc
-OIDC_ISSUER=https://accounts.google.com             # JWKS at https://www.googleapis.com/oauth2/v3/certs
-OIDC_RESOURCE=https://<google-oauth-client-id>      # must be a valid URI (mcp-auth validates this); add https:// prefix
-OIDC_ACCEPTED_AUDIENCES=<google-oauth-client-id>   # bare client ID — must match `aud` claim in Google ID tokens (no https://)
-OIDC_SCOPES=openid email                            # NOT empty — Google emits the `scope` claim
-AUTH_BUDGET_ACL={"you@gmail.com":["<budget-sync-id>"]}  # principal(email|sub|group:<name>) → [sync ids]; ["*"]=all
-# keep MCP_SSE_AUTHORIZATION set during the cutover; remove it only after OIDC verifies
-```
+- **OPTION B — Google-direct (rollback contingency only, ADR-0004).** `OIDC_ISSUER=https://accounts.google.com`.
+  Reuses Google identities directly, but the family allowlist must be replicated in
+  `AUTH_BUDGET_ACL`, JWKS is **cross-origin** (so `OIDC_JWKS_TRUSTED_HOSTS` is required),
+  and the token is a fixed 1h — seamlessness relies on refresh tokens, so **publish the
+  Google OAuth app to "In production"** (Testing expires refresh tokens after 7 days).
+
+  ```
+  AUTH_PROVIDER=oidc
+  OIDC_ISSUER=https://accounts.google.com             # JWKS at https://www.googleapis.com/oauth2/v3/certs
+  OIDC_RESOURCE=https://<google-oauth-client-id>      # must be a valid URI (mcp-auth validates this); add https:// prefix
+  OIDC_ACCEPTED_AUDIENCES=<google-oauth-client-id>    # bare client ID — must match `aud` in Google ID tokens (no https://)
+  OIDC_SCOPES=openid email                            # NOT empty — Google emits the `scope` claim
+  OIDC_JWKS_TRUSTED_HOSTS=www.googleapis.com          # REQUIRED for Google (cross-origin JWKS); opt-in, empty by default
+  AUTH_BUDGET_ACL={"you@gmail.com":["<budget-sync-id>"]}  # ALSO the family allowlist on this path
+  # keep MCP_SSE_AUTHORIZATION set during the cutover; remove it only after OIDC verifies
+  ```
+
+Var names are from agigante80/actual-mcp-server **0.8.16** `docs/CONFIGURATION.md`.
+
+> **Seamless sessions ("stop re-auth prompts").** The goal is *durability*, not longer
+> access tokens (a long-lived token on a write-capable finance endpoint enlarges the leak
+> blast-radius). Use a short access token + a durable, revocable refresh token: on OPTION A
+> tune the SaaS app's access/refresh lifetimes and enable refresh tokens; on OPTION B rely
+> on Google refresh + the "In production" publishing status above.
 
 > **`AUTH_PROVIDER=oidc` is a hard flip.** Setting it completely disables the Bearer
 > token server-wide — there is no dual-auth mode. All clients must complete the Google
@@ -504,10 +533,11 @@ Then reconfigure client connectors to use the Bearer token header again.
 
 ## Operations
 
-- **Pin the image.** The compose pins `actual-mcp` to `:v0.7.11` (off `:latest`) so
+- **Pin the image.** The compose pins `actual-mcp` to `:0.8.16` (off `:latest`) so
   an upstream change can't surprise a process holding your financial credentials —
-  v0.7.11 is the first semver release with OIDC support on `main` (ADR-0004). Bump
-  the tag deliberately after reading release notes and re-run the smoke + auth tests.
+  OIDC support landed in the 0.7.x line and the cross-origin JWKS fix
+  (`OIDC_JWKS_TRUSTED_HOSTS`, needed for Google) shipped in v0.8.1 (upstream #254/#255).
+  Bump the tag deliberately after reading release notes and re-run the smoke + auth tests.
 - **Rotate the token** by editing `mcp.env` and `docker compose up -d actual-mcp`;
   update the connector. Do this if a device with the token is lost.
 - **Logs:** `docker compose logs -f actual-mcp`. Set `MCP_BRIDGE_STORE_LOGS=true`
