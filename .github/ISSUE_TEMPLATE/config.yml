@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Design & architecture
+    url: https://github.com/kstimp/household-os/blob/main/docs/design-doc
+    about: Read the system design doc before proposing architectural changes.
+  - name: Architecture Decision Records
+    url: https://github.com/kstimp/household-os/tree/main/docs/decisions
+    about: Why key decisions were made — check here before re-litigating one.
+  - name: Contributing guide
+    url: https://github.com/kstimp/household-os/blob/main/CONTRIBUTING.md
+    about: Workflow, commit conventions, secret handling, and the ADR process.
