@@ -29,3 +29,15 @@ admin_ip_cidr        = "203.0.113.4/32"
 # in front of the MCP gate — a deliberate, narrow reversal of ADR-0002. Enable only
 # after confirming your MCP client can send CF-Access-Client-Id/Secret headers.
 # enable_mcp_access_service_token = false
+
+# ADR-0005 (the decision): Cloudflare Access SaaS-OIDC app as the MCP server's OIDC
+# issuer. OFF by default. Turn on at cutover (docs/mcp-budget-server.md §7): it creates
+# a SaaS (OIDC) app + a family-allowlist policy, and emits mcp_saas_oidc_client_id /
+# _client_secret for mcp.env + the AI-client connectors. The family gate lives in the
+# CF policy (family_emails), so it is NOT duplicated into AUTH_BUDGET_ACL.
+# enable_mcp_saas_oidc = true
+# mcp_oauth_redirect_uris = [
+#   "https://claude.ai/api/mcp/auth_callback",   # extend per each AI client's connector docs
+# ]
+# mcp_oidc_access_token_lifetime  = "30m"    # keep SHORT (write-capable finance endpoint)
+# mcp_oidc_refresh_token_lifetime = "720h"   # durable refresh = "stop re-auth prompts"

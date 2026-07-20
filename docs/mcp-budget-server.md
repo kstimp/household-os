@@ -197,10 +197,10 @@ Prerequisite: Actual is up (install doc Parts 1–11), and you know your Actual
 ### 1. Provision the MCP host (Terraform)
 
 The Terraform in `infra/terraform/` already includes the `mcp-budget` DNS record
-and its Origin cert (no Access app by default — see ADR-0002). The optional ADR-0003
-service-token Access layer is off unless you set `enable_mcp_access_service_token =
-true` (then the plan also adds an Access app + service token on this host). From
-`infra/terraform/`:
+and its Origin cert (no Access app by default — see ADR-0002). Two opt-in Access
+layers ship OFF: the ADR-0003 service-token layer (`enable_mcp_access_service_token`)
+and the **ADR-0005 SaaS-OIDC issuer** (`enable_mcp_saas_oidc` — the decided per-user
+auth path, enabled at the OIDC cutover in §7g, not now). From `infra/terraform/`:
 
 **bash:**
 ```bash
@@ -528,6 +528,77 @@ exit
 ```
 
 Then reconfigure client connectors to use the Bearer token header again.
+
+### 7g. Cutover on the Cloudflare Access SaaS-OIDC path (ADR-0005 — the decision)
+
+§7a–7f describe the **Google-direct** issuer, retained only as the rollback
+contingency. The **decided** path is **Cloudflare Access SaaS-OIDC** (ADR-0005):
+CF Access is the OIDC IdP, so the family allowlist stays in the CF Access policy (not
+duplicated into `AUTH_BUDGET_ACL`), JWKS is same-origin (no `OIDC_JWKS_TRUSTED_HOSTS`),
+and access/refresh token lifetimes are tunable to stop re-auth prompts. Substitute this
+subsection for 7a–7b; the 9 acceptance criteria (§7d) and the write-path check (§7e) are
+reused unchanged, with the make-or-break additions called out below.
+
+**7g-i. Stand up the SaaS-OIDC app — (workstation, Terraform).** In
+`terraform.tfvars`, enable the app and register a redirect URI per AI client, then
+apply. Provider schema drifts across versions, so run `terraform validate` first
+(the block targets the `cloudflare` provider pinned in `versions.tf`, 4.52.x):
+
+```hcl
+enable_mcp_saas_oidc    = true
+mcp_oauth_redirect_uris = ["https://claude.ai/api/mcp/auth_callback"]  # + one per client
+mcp_oidc_access_token_lifetime  = "30m"   # short — write-capable finance endpoint
+mcp_oidc_refresh_token_lifetime = "720h"  # durable refresh = seamless sessions
+```
+
+```bash
+terraform validate            # confirm the saas_app OIDC schema against the pinned provider
+terraform plan                # review: 1 SaaS Access app + 1 family-allowlist policy
+terraform apply
+terraform output -raw mcp_saas_oidc_client_id      # this is also the `aud`
+terraform output -raw mcp_saas_oidc_client_secret  # for the AI-client connector config
+# Issuer = https://<team>.cloudflareaccess.com (Zero Trust → Settings → team domain);
+# the `mcp_saas_oidc_issuer` output prints the template to fill in.
+```
+
+The family allowlist is the `mcp_saas_family` policy (reuses `family_emails`) — no
+`AUTH_BUDGET_ACL` family gate on this path.
+
+**7g-ii. Point `mcp.env` at the CF issuer — (on the box).** Use **OPTION A** from
+`mcp.env.example`; **omit** `OIDC_JWKS_TRUSTED_HOSTS` (CF's JWKS is same-origin):
+
+```bash
+ssh root@$IP
+cd /opt/household-os/actual
+cat >> mcp.env <<'OIDC'
+AUTH_PROVIDER=oidc
+OIDC_ISSUER=https://<team>.cloudflareaccess.com
+OIDC_RESOURCE=https://<cf-saas-oidc-client-id>
+OIDC_ACCEPTED_AUDIENCES=<cf-saas-oidc-client-id>
+OIDC_SCOPES=openid email
+AUTH_BUDGET_ACL={"you@gmail.com":["<budget-sync-id>"]}
+OIDC
+nano mcp.env          # fill the <...>; OIDC_RESOURCE needs the https:// prefix; leave MCP_SSE_AUTHORIZATION in place
+docker compose up -d actual-mcp
+docker compose logs --tail=40 actual-mcp   # OIDC/JWKS init against the CF issuer, no errors
+exit
+```
+
+**7g-iii. Configure each AI-client connector** against the **CF** endpoints (not
+Google's): Authorization/Token URLs from the SaaS app's config screen, Client ID/Secret
+from the Terraform outputs, scopes `openid email`. Then run the §7d acceptance criteria
+and §7e write-path check. The **make-or-break additions** for this path:
+
+- **(a)** discovery at the CF issuer exposes `authorization_endpoint` / `token_endpoint`
+  and Claude completes the PKCE flow (§7d criterion 1 positive).
+- **(b)** the server validates the presented token via JWKS — a JWT `id_token`, **not**
+  an opaque access token (the shared gating risk; §7d criteria 3/4/6 negatives).
+- **(c)** after the access token expires, the client **silently refreshes with no new
+  login prompt** — the true test of "stop re-auth prompts." Capture a token, wait past
+  `mcp_oidc_access_token_lifetime`, and confirm a tool call still succeeds.
+
+Once 1–9 pass, remove `MCP_SSE_AUTHORIZATION` exactly as in §7f. **If (b) fails on CF**,
+fall back to the Google-direct block (§7a–7f) per ADR-0005's rollback contingency.
 
 ---
 
