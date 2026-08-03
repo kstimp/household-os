@@ -75,6 +75,8 @@ deploy the Docker stack over SSH.
    [`docs/mcp-budget-server.md`](docs/mcp-budget-server.md).
 3. **Add the finance API sidecar (optional, Phase 2 prep)** —
    [`docs/install-actual-http-api.md`](docs/install-actual-http-api.md).
+4. **Harden admin SSH with Tailscale (optional)** — put SSH behind an authenticated tailnet and
+   close public port 22: [`docs/install-tailscale.md`](docs/install-tailscale.md) (~20–30 min, $0).
 
 > These are detailed, copy-paste runbooks with both **bash** (macOS/Linux) and
 > **PowerShell** (Windows) command variants. You need a domain on Cloudflare, a Hetzner
@@ -103,6 +105,7 @@ Day-two runbooks live in [`docs/`](docs/):
 
 - [Backups & restore](docs/runbook-backups.md)
 - [OS security updates](docs/runbook-os-updates.md)
+- [Harden admin SSH with Tailscale](docs/install-tailscale.md)
 - [Actual Budget updates](docs/runbook-actual-updates.md)
 - [MCP server updates](docs/runbook-mcp-updates.md)
 - [College app updates](docs/runbook-college-updates.md)

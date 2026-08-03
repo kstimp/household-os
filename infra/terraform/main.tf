@@ -49,14 +49,41 @@ resource "hcloud_volume" "data" {
 
 # Firewall: SSH from you only; HTTP/HTTPS from anywhere (Cloudflare proxies in
 # front, so the public sees Cloudflare, and the origin only needs 80/443 open).
+#
+# Admin SSH has two mutually exclusive shapes, chosen by var.ssh_over_tailscale_only:
+#   false (default) → the original rule: public tcp/22 open only from var.admin_ip_cidr.
+#   true            → NO public tcp/22 rule at all; admin SSH is reachable only over the
+#                     Tailscale tailnet (WireGuard arrives on tailscale0, which the cloud
+#                     firewall's public-interface rules don't govern). See
+#                     docs/install-tailscale.md. Flip to true ONLY after confirming you can
+#                     SSH in over the 100.x tailnet address, or you lock out the public path.
 resource "hcloud_firewall" "hub" {
   name = "household-os-fw"
 
-  rule {
-    direction  = "in"
-    protocol   = "tcp"
-    port       = "22"
-    source_ips = [var.admin_ip_cidr]
+  # Public SSH — present only while NOT tailnet-only.
+  dynamic "rule" {
+    for_each = var.ssh_over_tailscale_only ? [] : [1]
+    content {
+      direction  = "in"
+      protocol   = "tcp"
+      port       = "22"
+      source_ips = [var.admin_ip_cidr]
+    }
+  }
+
+  # Tailscale direct-connection port (WireGuard). Opened only when SSH is tailnet-only,
+  # so Tailscale can form a direct P2P link instead of relaying via a DERP server. Safe
+  # to expose: inbound packets are authenticated by WireGuard; unauthenticated traffic is
+  # dropped by tailscaled, not admitted to the host. Optional — SSH still works over a
+  # DERP relay without it, just with more latency.
+  dynamic "rule" {
+    for_each = var.ssh_over_tailscale_only ? [1] : []
+    content {
+      direction  = "in"
+      protocol   = "udp"
+      port       = "41641"
+      source_ips = ["0.0.0.0/0", "::/0"]
+    }
   }
 
   rule {

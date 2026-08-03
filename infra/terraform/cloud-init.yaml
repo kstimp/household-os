@@ -33,3 +33,11 @@ write_files:
 runcmd:
   - systemctl enable --now docker
   - mkdir -p /opt/household-os
+  # Tailscale for the admin plane (docs/install-tailscale.md). Installs the package and
+  # daemon only — it does NOT authenticate (no auth key = no secret in user_data). Run
+  # `tailscale up` by hand after first boot to join the tailnet. noble = 24.04.
+  - curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg -o /usr/share/keyrings/tailscale-archive-keyring.gpg
+  - curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-list -o /etc/apt/sources.list.d/tailscale.list
+  - apt-get update
+  - apt-get install -y tailscale
+  - systemctl enable --now tailscaled

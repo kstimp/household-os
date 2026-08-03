@@ -150,8 +150,24 @@ variable "admin_ssh_public_key" {
 }
 
 variable "admin_ip_cidr" {
-  description = "Your home/office IP in CIDR form (e.g. 203.0.113.4/32) — SSH is locked to this."
+  description = "Your home/office IP in CIDR form (e.g. 203.0.113.4/32) — SSH is locked to this (when ssh_over_tailscale_only is false)."
   type        = string
+}
+
+variable "ssh_over_tailscale_only" {
+  description = <<-EOT
+    When true, DROP the public SSH (tcp/22) firewall rule entirely — admin SSH is then
+    reachable ONLY over the Tailscale tailnet (docs/install-tailscale.md), and an inbound
+    udp/41641 rule is added so Tailscale can form a direct connection instead of relaying.
+    When false (default), the original rule stands: tcp/22 open from var.admin_ip_cidr.
+
+    ⚠️ Flip to true ONLY AFTER you have installed Tailscale on the box and confirmed you can
+    SSH in over its 100.x tailnet address (install-tailscale.md §4). Applying this before
+    Tailscale works locks you out of the public SSH path. var.admin_ip_cidr is still required
+    either way (it's the SSH source when this is false, and your break-glass if you flip back).
+  EOT
+  type        = bool
+  default     = false
 }
 
 variable "google_idp_name" {
