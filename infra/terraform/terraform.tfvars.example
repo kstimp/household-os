@@ -18,6 +18,12 @@ family_emails = [
 admin_ssh_public_key = "ssh-ed25519 AAAA... you@laptop"
 admin_ip_cidr        = "203.0.113.4/32"
 
+# Admin SSH hardening (docs/install-tailscale.md). OFF by default = public tcp/22 open from
+# admin_ip_cidr, the original behavior. Set true to CLOSE public SSH and reach the box only
+# over the Tailscale tailnet. Flip to true ONLY after you've installed Tailscale and confirmed
+# you can SSH in over the 100.x address — otherwise you lock out the public SSH path.
+# ssh_over_tailscale_only = false
+
 # Optional overrides (defaults: US East / cpx21):
 # server_type    = "cpx21"   # US locations need cpx*; cx22 is EU-only
 # location       = "ash"     # ash = US East, hil = US West, nbg1/fsn1/hel1 = EU

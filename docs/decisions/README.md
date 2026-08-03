@@ -14,3 +14,4 @@ Status is one of `Proposed`, `Accepted`, `Superseded by NNNN`.
 | [0003](0003-mcp-oidc-auth.md) | OIDC for the MCP budget server via CF Access — withdrawn; see ADR-0004 | Superseded by 0004 | 2026-06-16 |
 | [0004](0004-mcp-google-oidc.md) | MCP budget server: Google as direct OIDC issuer; enables Claude App | Superseded by 0005 | 2026-06-22 |
 | [0005](0005-mcp-auth-issuer-reeval.md) | MCP auth issuer: use Cloudflare Access SaaS-OIDC (Google-direct kept as rollback) | Accepted | 2026-07-20 |
+| [0006](0006-tailscale-admin-access.md) | Admin SSH over Tailscale; close public port 22 | Accepted | 2026-08-03 |
