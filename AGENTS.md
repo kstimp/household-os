@@ -22,6 +22,7 @@ assume code exists for them; don't scaffold them unless explicitly asked.
 infra/terraform/   # Hetzner VPS + volume, Cloudflare DNS/Access/Origin-cert/R2
 infra/actual/      # docker-compose + Caddyfile for Actual + Caddy; backup/restore scripts
 infra/college/     # standalone Node/Express + SQLite college-fund calculator
+infra/landing/     # static hub landing page (apex), served by Caddy file_server
 docs/              # design-doc, install-*.md setup guides, runbook-*.md ops guides
 docs/decisions/    # Architecture Decision Records
 ```

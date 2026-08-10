@@ -106,6 +106,8 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./certs:/certs:ro
+      # Static hub landing page, served by Caddy's file_server (no app container).
+      - ../landing/public:/srv/landing:ro
       - caddy_data:/data
       - caddy_config:/config
 

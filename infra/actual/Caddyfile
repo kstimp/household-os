@@ -41,3 +41,16 @@ actual-api.example.com {
 
 	reverse_proxy actual-http-api:5007
 }
+
+# Household OS hub landing page — the apex (replace example.com with your real
+# apex domain, matching Terraform's landing_host output). Static files served
+# straight from disk (mounted read-only into this Caddy container from
+# ../landing/public — see docker-compose.yml); there is no app container.
+# No COOP/COEP here: a static page needs none, and this is NOT Actual's block
+# (AGENTS.md rule 3 concerns only the Actual proxy above).
+example.com {
+	tls /certs/landing-origin.pem /certs/landing-origin.key
+
+	root * /srv/landing
+	file_server
+}
