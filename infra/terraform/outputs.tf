@@ -158,3 +158,25 @@ output "college_origin_key_pem" {
   sensitive   = true
 }
 
+output "landing_url" {
+  description = "Where the hub landing page lives once Caddy serves it (the apex)."
+  value       = "https://${local.landing_host}"
+}
+
+output "landing_host" {
+  description = "Public hostname the landing page is served at (the apex domain). Used to fill the Caddyfile placeholder."
+  value       = local.landing_host
+}
+
+output "landing_origin_cert_pem" {
+  description = "Cloudflare Origin certificate for the apex — write to certs/landing-origin.pem on the box."
+  value       = cloudflare_origin_ca_certificate.landing.certificate
+  sensitive   = true
+}
+
+output "landing_origin_key_pem" {
+  description = "Origin private key for the apex — write to certs/landing-origin.key on the box (chmod 600)."
+  value       = tls_private_key.landing_origin.private_key_pem
+  sensitive   = true
+}
+

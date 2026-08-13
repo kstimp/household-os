@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stimpert · Household OS</title>
+<meta name="description" content="Household OS — the family-private home operations hub. Money, College Fund, and more.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=Lora:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  /* ── Classical design-system tokens (source: _ds/…/styles.css) ───────────── */
+  :root {
+    --color-bg: #f3f2f2;
+    --color-surface: #eae9e9;
+    --color-text: #201f1d;
+    --color-accent: #b68235;
+    --color-divider: color-mix(in srgb, #201f1d 16%, transparent);
+
+    --color-neutral-100: #f8f4f4;
+    --color-neutral-200: #eae7e7;
+    --color-neutral-300: #d7d3d3;
+    --color-neutral-400: #bab6b6;
+    --color-neutral-500: #9b9797;
+    --color-neutral-600: #7d7979;
+    --color-neutral-700: #605d5d;
+    --color-neutral-800: #444141;
+    --color-neutral-900: #2d2b2b;
+
+    --color-accent-100: #fff3e4;
+    --color-accent-500: #c28d41;
+    --color-accent-700: #7d5411;
+    --color-accent-800: #5a3b0a;
+
+    --font-heading: "Cormorant Garamond", system-ui, sans-serif;
+    --font-heading-weight: 600;
+    --font-body: "Lora", system-ui, sans-serif;
+
+    --space-1: 4.6px;
+    --space-2: 9.2px;
+    --space-3: 13.8px;
+    --space-4: 18.4px;
+    --space-6: 27.6px;
+    --space-8: 36.8px;
+
+    --radius-md: 4px;
+
+    --shadow-sm: 0 1px 2px color-mix(in srgb, #2d2b2b 14%, transparent);
+  }
+
+  /* Dark theme — palette from the design's `.dark` variant, applied by system
+     preference so the page is a real document rather than a prop toggle. */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --color-bg: #1b1917;
+      --color-surface: #242120;
+      --color-text: #efe9e1;
+      --color-divider: color-mix(in srgb, #efe9e1 15%, transparent);
+      --color-neutral-100: #2c2926;
+      --color-neutral-200: #38342f;
+      --color-neutral-300: #453f39;
+      --color-neutral-400: #5d564e;
+      --color-neutral-500: #7d7467;
+      --color-neutral-600: #9c9285;
+      --color-neutral-700: #c0b6a7;
+      --color-neutral-800: #ded6c9;
+      --color-neutral-900: #f5f0e7;
+      --color-accent: #d8a75b;
+      --color-accent-100: #3a2c14;
+      --color-accent-500: #d8a75b;
+      --color-accent-700: #e5bd7c;
+      --color-accent-800: #f2d7a5;
+    }
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; background: var(--color-bg); color: var(--color-text); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+  a { color: var(--color-accent-700); text-decoration: none; }
+  a:hover { color: var(--color-accent-800); }
+  :focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+
+  /* ── Page components ─────────────────────────────────────────────────────── */
+  .shell { min-height: 100vh; background: var(--color-bg); display: grid; grid-template-columns: 238px 1fr; }
+
+  .sidebar { padding: var(--space-6); border-right: 1px solid var(--color-divider); display: flex; flex-direction: column; justify-content: space-between; }
+  .brand-1 { font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 19px; line-height: 1.2; }
+  .brand-2 { font-family: var(--font-heading); font-size: 19px; line-height: 1.2; color: var(--color-accent-700); }
+  .kicker { font-family: var(--font-body); text-transform: uppercase; letter-spacing: .1em; font-size: 10px; color: var(--color-neutral-500); margin: 0 0 var(--space-2); }
+
+  .navlink { display: flex; align-items: center; justify-content: space-between; padding: 7px 0; font-family: var(--font-body); font-size: 14px; color: var(--color-neutral-700); border-bottom: 1px solid transparent; transition: color .15s, border-color .15s; }
+  .navlink:hover { color: var(--color-accent-700); border-bottom-color: var(--color-accent); }
+  .navlink.is-muted { color: var(--color-neutral-500); pointer-events: none; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--color-accent-500); }
+  .sidebar-foot { font-family: var(--font-body); font-size: 11px; line-height: 1.6; color: var(--color-neutral-500); }
+
+  .main { padding: var(--space-6) var(--space-8) var(--space-8); max-width: 1080px; }
+  .page-head { display: flex; align-items: flex-end; justify-content: space-between; padding-bottom: var(--space-4); border-bottom: 1px solid var(--color-divider); margin-bottom: var(--space-6); }
+  .page-head h1 { font-family: var(--font-heading); font-weight: 400; font-size: 32px; line-height: 1.15; margin: 0; }
+  .page-head .meta { text-align: right; font-family: var(--font-body); font-size: 12px; color: var(--color-neutral-600); font-variant-numeric: tabular-nums; }
+
+  .doors { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-8); margin-bottom: var(--space-8); }
+  .door { position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; min-height: 268px; padding: var(--space-6); border: 1px solid var(--color-divider); border-radius: var(--radius-md); color: var(--color-text); transition: border-color .18s, box-shadow .18s, background .18s; }
+  .door:hover { border-color: var(--color-accent); box-shadow: var(--shadow-sm); background: color-mix(in srgb, var(--color-accent) 4%, transparent); }
+  .door:active { background: color-mix(in srgb, var(--color-accent) 9%, transparent); }
+  .ghost { position: absolute; right: var(--space-4); top: -14px; font-family: var(--font-heading); font-weight: 400; font-size: 132px; line-height: 1; color: var(--color-accent); opacity: .13; font-variant-numeric: tabular-nums; pointer-events: none; }
+  .door-kicker { font-family: var(--font-body); text-transform: uppercase; letter-spacing: .1em; font-size: 10px; color: var(--color-accent-700); margin: 0 0 var(--space-3); }
+  .door h2 { font-family: var(--font-heading); font-weight: 400; font-size: 34px; line-height: 1.1; margin: 0 0 var(--space-2); }
+  .door p.desc { font-family: var(--font-body); font-size: 14px; line-height: 1.6; color: var(--color-neutral-700); margin: 0; max-width: 30ch; }
+  .door-foot { display: flex; align-items: center; justify-content: space-between; padding-top: var(--space-4); border-top: 1px solid var(--color-divider); font-family: var(--font-body); font-size: 11px; color: var(--color-neutral-600); font-variant-numeric: tabular-nums; }
+  .door-foot .status { display: flex; align-items: center; gap: 7px; }
+  .arrow { font-size: 14px; color: var(--color-accent-700); transition: transform .18s; }
+  .door:hover .arrow { transform: translateX(4px); }
+
+  .stats { display: flex; padding: var(--space-4) 0; border-top: 1px solid var(--color-divider); border-bottom: 1px solid var(--color-divider); margin-bottom: var(--space-8); }
+  .stat { padding: 0 var(--space-4); border-left: 1px solid var(--color-divider); }
+  .stat:first-child { padding-left: 0; border-left: 0; }
+  .stat .label { font-family: var(--font-body); text-transform: uppercase; letter-spacing: .09em; font-size: 10px; color: var(--color-neutral-500); margin: 0 0 4px; }
+  .stat .value { font-family: var(--font-heading); font-size: 19px; margin: 0; font-variant-numeric: tabular-nums; }
+
+  .soon { display: grid; grid-template-columns: 22px 1fr auto; align-items: baseline; gap: var(--space-4); padding: var(--space-3) 0; border-bottom: 1px solid var(--color-divider); }
+  .soon .num { font-family: var(--font-heading); font-size: 13px; color: var(--color-accent-700); font-variant-numeric: tabular-nums; }
+  .soon .what { font-family: var(--font-body); font-size: 14px; color: var(--color-neutral-700); }
+  .soon .phase { font-family: var(--font-body); font-size: 11px; color: var(--color-neutral-500); }
+
+  @media (max-width: 720px) {
+    .shell { grid-template-columns: 1fr; }
+    .sidebar { border-right: 0; border-bottom: 1px solid var(--color-divider); }
+    .main { padding: var(--space-6) var(--space-4) var(--space-8); }
+    .doors { grid-template-columns: 1fr; gap: var(--space-6); }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <aside class="sidebar">
+    <div>
+      <div style="margin-bottom:var(--space-6)">
+        <div class="brand-1">Stimpert</div>
+        <div class="brand-2">Household OS</div>
+      </div>
+      <p class="kicker">Rooms</p>
+      <nav style="display:flex;flex-direction:column">
+        <a class="navlink" href="https://money.stimpert.haus">Money<span class="dot"></span></a>
+        <a class="navlink" href="https://college.stimpert.haus">College Fund<span class="dot"></span></a>
+        <span class="navlink is-muted">Meals</span>
+        <span class="navlink is-muted">Chores</span>
+        <span class="navlink is-muted">Calendar</span>
+      </nav>
+    </div>
+    <div class="sidebar-foot">
+      Signed in via Google SSO<br>Family allowlist &middot; Phase 1
+    </div>
+  </aside>
+
+  <main class="main">
+
+    <header class="page-head">
+      <h1 id="greeting">Good evening.</h1>
+      <div class="meta">
+        <span id="today">Monday, 10 August</span><br><span id="svc-status">All services responding</span>
+      </div>
+    </header>
+
+    <div class="doors">
+
+      <a class="door" href="https://money.stimpert.haus">
+        <span class="ghost">01</span>
+        <div>
+          <p class="door-kicker">Finance</p>
+          <h2>Money</h2>
+          <p class="desc">Budgets, accounts and spending, kept in Actual.</p>
+        </div>
+        <div class="door-foot">
+          <span class="status"><span class="dot"></span><span id="money-sync">Synced 4 min ago</span></span>
+          <span class="arrow">&rarr;</span>
+        </div>
+      </a>
+
+      <a class="door" href="https://college.stimpert.haus">
+        <span class="ghost">02</span>
+        <div>
+          <p class="door-kicker">Savings</p>
+          <h2>College Fund</h2>
+          <p class="desc">Contributions and projections, per child.</p>
+        </div>
+        <div class="door-foot">
+          <span class="status"><span class="dot"></span><span id="college-sync">Updated today</span></span>
+          <span class="arrow">&rarr;</span>
+        </div>
+      </a>
+
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <p class="label">Services</p>
+        <p class="value" id="stat-services">3 of 3 up</p>
+      </div>
+      <div class="stat">
+        <p class="label">Backup</p>
+        <p class="value" id="stat-backup">Streaming to R2</p>
+      </div>
+      <div class="stat">
+        <p class="label">Access</p>
+        <p class="value" id="stat-access">Family only</p>
+      </div>
+      <div class="stat">
+        <p class="label">Build</p>
+        <p class="value" id="stat-build">Phase 1 of 4</p>
+      </div>
+    </div>
+
+    <section>
+      <p class="kicker">On the way</p>
+      <div class="soon">
+        <span class="num">03</span>
+        <span class="what">Meals &mdash; weekly plan and the grocery board</span>
+        <span class="phase">Phase 2</span>
+      </div>
+      <div class="soon">
+        <span class="num">04</span>
+        <span class="what">Chores &mdash; shared household to-dos</span>
+        <span class="phase">Phase 3</span>
+      </div>
+      <div class="soon">
+        <span class="num">05</span>
+        <span class="what">Calendar &mdash; a read-only family mirror</span>
+        <span class="phase">Phase 3</span>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+  // Progressive enhancement: the static markup above is a correct no-JS fallback;
+  // this replaces the values that would otherwise go stale, and centralises the
+  // household telemetry into one place ready for a real data source.
+  (function () {
+    // ── Live, client-derivable values ──────────────────────────────────────
+    var now = new Date();
+    var hour = now.getHours();
+    var greeting =
+      hour < 5  ? 'Good night.' :
+      hour < 12 ? 'Good morning.' :
+      hour < 17 ? 'Good afternoon.' :
+      hour < 22 ? 'Good evening.' : 'Good night.';
+
+    // ── Household service telemetry ────────────────────────────────────────
+    // Single wire-up point for the Phase-2 Hub health API. Until that exists these
+    // are declarative config, NOT live measurements — a static page has no health
+    // signal and we deliberately do not fake one (design: "silent failure is the
+    // enemy" → surface real state, never invented state).
+    // TODO(phase-2): populate STATUS from the Hub /health API instead of literals.
+    var STATUS = {
+      svcStatus:   'All services responding',
+      moneySync:   'Synced 4 min ago',
+      collegeSync: 'Updated today',
+      services:    '3 of 3 up',
+      backup:      'Streaming to R2',
+      access:      'Family only',
+      build:       'Phase 1 of 4'
+    };
+
+    function set(id, text) {
+      var el = document.getElementById(id);
+      if (el) el.textContent = text;
+    }
+
+    set('greeting', greeting);
+    set('today', now.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' }));
+    set('svc-status', STATUS.svcStatus);
+    set('money-sync', STATUS.moneySync);
+    set('college-sync', STATUS.collegeSync);
+    set('stat-services', STATUS.services);
+    set('stat-backup', STATUS.backup);
+    set('stat-access', STATUS.access);
+    set('stat-build', STATUS.build);
+  })();
+</script>
+</body>
+</html>

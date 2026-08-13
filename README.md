@@ -23,6 +23,7 @@ accounts** can reach it.
 | **Actual Budget stack** | Docker Compose for Actual + Caddy (TLS), backup/restore scripts | [`infra/actual/`](infra/actual/) |
 | **MCP budget server** | AI (Claude) natural-language access to the budget over MCP | [`docs/mcp-budget-server.md`](docs/mcp-budget-server.md) |
 | **College fund calculator** | Small standalone Node/Express + SQLite savings app | [`infra/college/`](infra/college/) |
+| **Hub landing page** | Static family hub at the apex, served by Caddy's `file_server` (no app container) | [`infra/landing/`](infra/landing/) |
 | **Design & decisions** | Full system design doc + Architecture Decision Records | [`docs/`](docs/), [`docs/decisions/`](docs/decisions/) |
 | **Operations runbooks** | Backups, OS/app updates, restores | [`docs/runbook-*.md`](docs/) |
 

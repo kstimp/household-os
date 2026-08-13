@@ -3,6 +3,7 @@ locals {
   mcp_host        = "${var.mcp_subdomain}.${var.domain}"
   college_host    = "college.${var.domain}"
   actual_api_host = "${var.actual_api_subdomain}.${var.domain}"
+  landing_host    = var.domain # apex — the hub landing page lives at the zone root
 }
 
 # ---------------------------------------------------------------------------
@@ -231,6 +232,71 @@ resource "cloudflare_zero_trust_access_policy" "college_family" {
   }
 }
 
+# ---------------------------------------------------------------------------
+# Edge: Household OS hub landing page (apex — stimpert.haus).
+#
+# Static hub page served by Caddy's file_server (no app container). Same edge
+# pattern as the college app above — proxied A record + 15-year Origin cert +
+# Cloudflare Access (Google SSO + family allowlist). The only differences are:
+#   • It lives at the ZONE APEX, so the DNS record name is "@" (var.domain).
+#   • ⚠️ Apex may already carry records (email/MX, a redirect, a placeholder A).
+#     Those are NOT managed here (MX/TXT are separate record types); but if a
+#     conflicting apex A/AAAA already exists, reconcile it so this proxied A wins.
+#     See docs/runbook-landing-updates.md §1d.
+# ---------------------------------------------------------------------------
+
+resource "cloudflare_record" "landing" {
+  zone_id = var.cloudflare_zone_id
+  name    = "@" # zone apex
+  type    = "A"
+  content = hcloud_server.hub.ipv4_address
+  proxied = true
+  ttl     = 1
+}
+
+resource "tls_private_key" "landing_origin" {
+  algorithm = "RSA"
+  rsa_bits  = 2048
+}
+
+resource "tls_cert_request" "landing_origin" {
+  private_key_pem = tls_private_key.landing_origin.private_key_pem
+  subject {
+    common_name = local.landing_host
+  }
+  dns_names = [local.landing_host]
+}
+
+resource "cloudflare_origin_ca_certificate" "landing" {
+  csr                = tls_cert_request.landing_origin.cert_request_pem
+  hostnames          = [local.landing_host]
+  request_type       = "origin-rsa"
+  requested_validity = 5475 # 15 years
+}
+
+resource "cloudflare_zero_trust_access_application" "landing" {
+  account_id           = var.cloudflare_account_id
+  name                 = "Household OS — Hub landing"
+  domain               = local.landing_host
+  type                 = "self_hosted"
+  session_duration     = var.access_session_duration
+  app_launcher_visible = true
+
+  allowed_idps              = [data.cloudflare_zero_trust_access_identity_provider.google.id]
+  auto_redirect_to_identity = true
+}
+
+resource "cloudflare_zero_trust_access_policy" "landing_family" {
+  account_id     = var.cloudflare_account_id
+  application_id = cloudflare_zero_trust_access_application.landing.id
+  name           = "Family allowlist"
+  precedence     = 1
+  decision       = "allow"
+
+  include {
+    email = var.family_emails
+  }
+}
 
 # ---------------------------------------------------------------------------
 # Edge: MCP budget server (agigante80/actual-mcp-server). See ADR-0002.
