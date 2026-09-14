@@ -677,22 +677,22 @@ rclone ls r2:household-os-backups/
 exit
 ```
 
-### 12c. Copy the backup and restore scripts to the server
+### 12c. Copy the backup, restore, and upgrade scripts to the server
 
 *(Run locally — `$IP` must be set in this shell.)*
 
 **bash:**
 
 ```bash
-scp ../actual/backup.sh ../actual/restore.sh root@$IP:/opt/household-os/actual/
-ssh root@$IP 'chmod +x /opt/household-os/actual/backup.sh /opt/household-os/actual/restore.sh'
+scp ../actual/backup.sh ../actual/restore.sh ../actual/upgrade.sh root@$IP:/opt/household-os/actual/
+ssh root@$IP 'chmod +x /opt/household-os/actual/backup.sh /opt/household-os/actual/restore.sh /opt/household-os/actual/upgrade.sh'
 ```
 
 **PowerShell:**
 
 ```powershell
-scp ..\actual\backup.sh ..\actual\restore.sh root@${IP}:/opt/household-os/actual/
-ssh root@$IP 'chmod +x /opt/household-os/actual/backup.sh /opt/household-os/actual/restore.sh'
+scp ..\actual\backup.sh ..\actual\restore.sh ..\actual\upgrade.sh root@${IP}:/opt/household-os/actual/
+ssh root@$IP 'chmod +x /opt/household-os/actual/backup.sh /opt/household-os/actual/restore.sh /opt/household-os/actual/upgrade.sh'
 ```
 
 ### 12d. Install the systemd timer

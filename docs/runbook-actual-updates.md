@@ -31,50 +31,43 @@ As of this writing the current release is **v26.7.0**.
 
 ---
 
-## 1 — Back up and record the current version
+## 1 — Automated update with `upgrade.sh` (Recommended)
 
-Always take a fresh backup immediately before updating, and record the image digest you're
-on so you have a concrete rollback target (this is what `:latest` otherwise loses).
+The standard automated way to update `actual-server` is using `./upgrade.sh`. This helper script automatically records the pre-upgrade image digest, runs a fresh pre-upgrade backup to Cloudflare R2, pulls the newest image, recreates the `actual-server` container, and checks its health status.
 
 ```bash
 ssh root@$IP
 cd /opt/household-os/actual
 
-# 1a. Fresh backup to R2 (pauses Actual ~1s).
-./backup.sh
-# Ends with "Backup complete." — note the archive name it uploads.
-
-# 1b. Record the CURRENT image digest — this is your rollback target.
-docker compose images actual-server
-# Copy the IMAGE / DIGEST, e.g.:
-#   actualbudget/actual-server   latest   sha256:abc123...
-# Keep this sha256 somewhere safe until the update is confirmed good.
+# Run automated upgrade (takes a backup, pulls image, recreates container)
+./upgrade.sh
 ```
-
-> **Why record the digest?** `restore.sh` restores your *data* but not the *binary*
-> ([§3](#3--rollback-plan) explains why that distinction matters). Under `:latest` the old
-> image loses its tag on the next `pull` and survives only as a dangling image until pruned,
-> so the digest is the reliable handle for rolling the binary back.
 
 ---
 
-## 2 — Update
+## 2 — Manual step-by-step update
+
+If you prefer to run the steps manually instead of using `./upgrade.sh`:
 
 ```bash
-# Still in /opt/household-os/actual on the server.
+ssh root@$IP
+cd /opt/household-os/actual
 
-# 2a. Pull the newest image.
+# 2a. Fresh backup to R2 (pauses Actual ~1s).
+./backup.sh
+
+# 2b. Record the CURRENT image digest — this is your rollback target.
+docker compose images actual-server
+
+# 2c. Pull the newest image.
 docker compose pull actual-server
 
-# 2b. Recreate ONLY actual-server (Caddy and actual-mcp keep running).
+# 2d. Recreate ONLY actual-server (Caddy and actual-mcp keep running).
 docker compose up -d actual-server
 
-# 2c. Verify it came back healthy.
+# 2e. Verify it came back healthy.
 docker compose ps
-# actual-server should show "Up (healthy)" (health check may take ~60s to flip to healthy).
 docker compose logs --tail=30 actual-server
-# Should show a clean startup on port 5006, no errors.
-
 exit
 ```
 
