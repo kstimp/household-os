@@ -1,0 +1,6 @@
+# These files run on the Linux VPS. Force LF on checkout even when a
+# Windows clone has core.autocrlf=true, so shell shebangs don't become
+# "#!/usr/bin/env bash\r" (which fails with: env: 'bash\r': No such file).
+*.sh        text eol=lf
+Caddyfile   text eol=lf
+Dockerfile  text eol=lf
