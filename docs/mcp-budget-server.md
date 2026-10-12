@@ -106,7 +106,9 @@ each identity to budgets. **The issuer is Cloudflare Access SaaS-OIDC (Option A,
 Option B (Google-direct) is retained only as the rollback contingency:
 
 - **OPTION A — Cloudflare Access SaaS-OIDC (the decision, ADR-0005).** CF Access acts as
-  the OIDC IdP via a **SaaS** application (issuer `https://<team>.cloudflareaccess.com`).
+  the OIDC IdP via a **SaaS** application. The issuer is **per-app** —
+  `https://<team>.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<client-id>`, not the bare
+  team domain — and must match the token's `iss` exactly.
   This keeps the family allowlist in the **CF Access policy** (one place, not duplicated
   into `AUTH_BUDGET_ACL`), serves JWKS **same-origin** (no `OIDC_JWKS_TRUSTED_HOSTS`), and
   exposes **configurable access/refresh token lifetimes** — the lever for "stop re-auth
@@ -116,13 +118,20 @@ Option B (Google-direct) is retained only as the rollback contingency:
 
   ```
   AUTH_PROVIDER=oidc
-  OIDC_ISSUER=https://<team>.cloudflareaccess.com
-  OIDC_RESOURCE=https://<cf-saas-oidc-client-id>      # valid-URI form for mcp-auth
-  OIDC_ACCEPTED_AUDIENCES=<cf-saas-oidc-client-id>    # bare client ID — must match `aud`
-  OIDC_SCOPES=openid email
-  AUTH_BUDGET_ACL={"you@gmail.com":["<budget-sync-id>"]}  # per-BUDGET scoping (family gate = CF policy)
-  # keep MCP_SSE_AUTHORIZATION set during the cutover; remove it only after OIDC verifies
+  OIDC_ISSUER=https://<team>.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<cf-saas-oidc-client-id>
+  OIDC_RESOURCE=https://<mcp_host>/http               # this server's public MCP URL (RFC 9728 resource)
+  OIDC_ACCEPTED_AUDIENCES=https://claude.ai/api/mcp/auth_callback,<cf-saas-oidc-client-id>
+  OIDC_SCOPES=                                        # MUST be empty — CF access tokens have no `scope` claim
+  OIDC_SCOPES_SUPPORTED=openid,email                  # advertised to clients, not enforced
+  AUTH_BUDGET_ACL={"you@gmail.com":["*"]}             # per-BUDGET scoping (family gate = CF policy)
   ```
+
+  What the live cutover established about CF SaaS tokens (all three differ from a
+  "standard" OIDC IdP, and each one alone rejects every token if set wrong):
+  - **`iss` is per-app** (`…/cdn-cgi/access/sso/oidc/<client-id>`), not the team domain.
+  - **`aud` is the client's redirect URI** (e.g. `https://claude.ai/api/mcp/auth_callback`),
+    not the client ID and not `OIDC_RESOURCE`. Add one accepted audience per AI client.
+  - **The access token is a JWT with no `scope` claim**, so no scope can be required.
 
 - **OPTION B — Google-direct (rollback contingency only, ADR-0004).** `OIDC_ISSUER=https://accounts.google.com`.
   Reuses Google identities directly, but the family allowlist must be replicated in
@@ -133,15 +142,21 @@ Option B (Google-direct) is retained only as the rollback contingency:
   ```
   AUTH_PROVIDER=oidc
   OIDC_ISSUER=https://accounts.google.com             # JWKS at https://www.googleapis.com/oauth2/v3/certs
-  OIDC_RESOURCE=https://<google-oauth-client-id>      # must be a valid URI (mcp-auth validates this); add https:// prefix
+  OIDC_RESOURCE=https://<mcp_host>/http               # this server's public MCP URL (endpoint form)
   OIDC_ACCEPTED_AUDIENCES=<google-oauth-client-id>    # bare client ID — must match `aud` in Google ID tokens (no https://)
-  OIDC_SCOPES=openid email                            # NOT empty — Google emits the `scope` claim
+  OIDC_SCOPES=                                        # only list scopes the token's `scope` claim really carries
+  OIDC_SCOPES_SUPPORTED=openid,email
   OIDC_JWKS_TRUSTED_HOSTS=www.googleapis.com          # REQUIRED for Google (cross-origin JWKS); opt-in, empty by default
-  AUTH_BUDGET_ACL={"you@gmail.com":["<budget-sync-id>"]}  # ALSO the family allowlist on this path
-  # keep MCP_SSE_AUTHORIZATION set during the cutover; remove it only after OIDC verifies
+  AUTH_BUDGET_ACL={"you@gmail.com":["*"]}             # ALSO the family allowlist on this path
   ```
 
-Var names are from agigante80/actual-mcp-server **0.8.16** `docs/CONFIGURATION.md`.
+  OPTION B has not been re-verified on 0.22.x; the values above follow the upstream
+  0.22.x rules.
+
+Var names and semantics are from agigante80/actual-mcp-server **0.22.11** (the deployed
+version): `OIDC_RESOURCE` must be an absolute URL (endpoint form recommended),
+`OIDC_SCOPES` / `OIDC_SCOPES_SUPPORTED` / `OIDC_ACCEPTED_AUDIENCES` are
+**comma-separated**, and `OIDC_SCOPES` is **enforced** against the token's `scope` claim.
 
 > **Seamless sessions ("stop re-auth prompts").** The goal is *durability*, not longer
 > access tokens (a long-lived token on a write-capable finance endpoint enlarges the leak
@@ -150,8 +165,8 @@ Var names are from agigante80/actual-mcp-server **0.8.16** `docs/CONFIGURATION.m
 > on Google refresh + the "In production" publishing status above.
 
 > **`AUTH_PROVIDER=oidc` is a hard flip.** Setting it completely disables the Bearer
-> token server-wide — there is no dual-auth mode. All clients must complete the Google
-> OAuth flow once this is set. Keep `MCP_SSE_AUTHORIZATION` in `mcp.env` (but NOT in the
+> token server-wide — there is no dual-auth mode. All clients must complete the OAuth
+> flow once this is set. Keep `MCP_SSE_AUTHORIZATION` in `mcp.env` (but NOT in the
 > env as `AUTH_PROVIDER=oidc` disables it) until OIDC is verified end-to-end.
 
 > **Supply-chain note.** Before removing the Bearer token, run the OIDC acceptance
@@ -287,70 +302,51 @@ exit
 ### 5. Connect your AI client
 
 The MCP endpoint is `https://<mcp_host>/http` (the default `MCP_HTTP_PATH` is `/http`).
-All three clients authenticate via **Google OAuth 2.0** using the credentials from your
-Google Cloud Console OAuth client (see §7a for how to create it). Because
-`AUTH_PROVIDER=oidc` disables Bearer server-wide, there is no static-token option once
-OIDC is active — all clients must complete the Google OAuth flow.
+Clients authenticate with OAuth 2.1 + PKCE against the **CF Access SaaS-OIDC app**
+(ADR-0005, set up in §7g), using its client ID/secret from `terraform output`. Clients
+discover the authorization/token endpoints automatically from the server's
+`/.well-known/oauth-protected-resource` metadata, so you only supply the URL and the
+client credentials. Because `AUTH_PROVIDER=oidc` disables Bearer server-wide, there is
+no static-token option once OIDC is active.
 
-#### Claude.ai web (syncs automatically to Claude mobile)
+Each client's OAuth redirect URI must be in both `mcp_oauth_redirect_uris` (Terraform)
+**and** `OIDC_ACCEPTED_AUDIENCES` (`mcp.env`) — CF puts the redirect URI in the token's
+`aud`. Claude.ai's is `https://claude.ai/api/mcp/auth_callback`.
 
-Settings → Integrations → Add custom integration → Advanced Settings:
+#### Claude.ai web (syncs automatically to Claude mobile) — verified
+
+Settings → Connectors → Add custom connector:
 
 - **Name:** Budget
 - **URL:** `https://<mcp_host>/http`
-- **Authorization URL:** `https://accounts.google.com/o/oauth2/v2/auth`
-- **Token URL:** `https://oauth2.googleapis.com/token`
-- **Client ID:** `<google-oauth-client-id>`
-- **Client Secret:** `<google-oauth-client-secret>`
-- **Scopes:** `openid email`
+- **Advanced settings → OAuth Client ID:** `terraform output -raw mcp_saas_oidc_client_id`
+- **Advanced settings → OAuth Client Secret:** `terraform output -raw mcp_saas_oidc_client_secret`
 
-The connector syncs automatically to the Claude iOS/Android app. Verify with "list
-my accounts and this month's balances."
+**Connect** goes CF Access login → Google → back to Claude. (Google may skip its
+account chooser if you're signed in to one account.) The connector syncs automatically
+to the Claude iOS/Android app. Verify with "list my accounts and this month's balances."
 
 > **Known issue (claude.ai bug #46140):** The OAuth flow may complete but the token
 > is not forwarded to the MCP server on some requests. Check if the issue is resolved
 > before relying on this; retry the auth flow if requests return 401 unexpectedly.
 
-#### Claude Desktop
+#### Claude Desktop / Claude Code — not yet verified on the CF path
 
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or
-`%APPDATA%\Claude\claude_desktop_config.json` (Windows):
-
-```json
-{
-  "mcpServers": {
-    "budget": {
-      "url": "https://<mcp_host>/http",
-      "oauth": {
-        "clientId": "<google-oauth-client-id>",
-        "clientSecret": "<google-oauth-client-secret>",
-        "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
-        "tokenUrl": "https://oauth2.googleapis.com/token",
-        "scopes": ["openid", "email"]
-      }
-    }
-  }
-}
-```
-
-Restart Claude Desktop after saving. Verify with "list my accounts."
-
-> **Schema note:** Claude Desktop's remote-MCP config evolves. If the `oauth` key
-> structure above doesn't work, check the current format at docs.anthropic.com under
-> MCP → Connecting to remote servers.
-
-#### Claude Code
-
-```bash
-claude mcp add budget --transport http "https://<mcp_host>/http"
-# Claude Code will prompt for OAuth authentication on first use
-```
+Connectors added on claude.ai also appear in Claude Desktop, so most people need
+nothing extra. A client that runs its own OAuth flow (Claude Code's
+`claude mcp add budget --transport http "https://<mcp_host>/http"`, or a Desktop
+config with its own `oauth` block) uses a **different redirect URI**, usually a
+`localhost` callback. Before using one, find its exact redirect URI and add it to
+both `mcp_oauth_redirect_uris` and `OIDC_ACCEPTED_AUDIENCES`. Otherwise CF rejects
+the redirect, or the server rejects the token's `aud`.
 
 #### Family members (non-technical users)
 
 A spouse or other family member uses the same **claude.ai web** steps above with
-their own Google account. Add their email to `AUTH_BUDGET_ACL` in `mcp.env` before
-they connect.
+their own Google account. Their email must be in `family_emails` (Terraform — the CF
+Access policy is the family gate) and in `AUTH_BUDGET_ACL` (`mcp.env` — per-budget
+scoping). If they authenticate but tool calls return **403**, key their ACL entry on
+their CF `user_id` (Zero Trust → Logs → Access) instead — see Troubleshooting.
 
 **Other AI UIs that support custom remote MCP:**
 - **ChatGPT (Plus/Pro/Team):** Settings → Connectors → Create; supports remote MCP
@@ -407,12 +403,14 @@ cd /opt/household-os/actual
 cat >> mcp.env <<'OIDC'
 AUTH_PROVIDER=oidc
 OIDC_ISSUER=https://accounts.google.com
-OIDC_RESOURCE=https://<google-oauth-client-id>
+OIDC_RESOURCE=https://<mcp_host>/http
 OIDC_ACCEPTED_AUDIENCES=<google-oauth-client-id>
-OIDC_SCOPES=openid email
-AUTH_BUDGET_ACL={"you@gmail.com":["<budget-sync-id>"]}
+OIDC_SCOPES=
+OIDC_SCOPES_SUPPORTED=openid,email
+OIDC_JWKS_TRUSTED_HOSTS=www.googleapis.com
+AUTH_BUDGET_ACL={"you@gmail.com":["*"]}
 OIDC
-nano mcp.env          # fill the <...> placeholders; OIDC_RESOURCE needs https:// prefix; leave MCP_SSE_AUTHORIZATION in place
+nano mcp.env          # fill the <...> placeholders; remove any older AUTH_*/OIDC_* lines (no duplicates)
 docker compose up -d actual-mcp
 docker compose logs --tail=40 actual-mcp   # should report OIDC/JWKS init with Google issuer, no errors
 exit
@@ -555,14 +553,19 @@ mcp_oidc_refresh_token_lifetime = "720h"  # durable refresh = seamless sessions
 terraform validate            # confirm the saas_app OIDC schema against the pinned provider
 terraform plan                # review: 1 SaaS Access app + 1 family-allowlist policy
 terraform apply
-terraform output -raw mcp_saas_oidc_client_id      # this is also the `aud`
+terraform output -raw mcp_saas_oidc_client_id      # for the connector (NOT the token `aud` — see 7g-ii)
 terraform output -raw mcp_saas_oidc_client_secret  # for the AI-client connector config
-# Issuer = https://<team>.cloudflareaccess.com (Zero Trust → Settings → team domain);
-# the `mcp_saas_oidc_issuer` output prints the template to fill in.
+# Issuer is PER-APP: https://<team>.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<client-id>.
+# Set cloudflare_team_domain in tfvars and `terraform output -raw mcp_saas_oidc_issuer`
+# prints it exactly; confirm against <issuer>/.well-known/openid-configuration.
 ```
 
 The family allowlist is the `mcp_saas_family` policy (reuses `family_emails`) — no
 `AUTH_BUDGET_ACL` family gate on this path.
+
+> **Keep these vars in `terraform.tfvars`, not `-var` flags.** The app only exists while
+> `enable_mcp_saas_oidc = true`. A later `terraform apply` without it **destroys the app**
+> and breaks every client's auth.
 
 **7g-ii. Point `mcp.env` at the CF issuer — (on the box).** Use **OPTION A** from
 `mcp.env.example`; **omit** `OIDC_JWKS_TRUSTED_HOSTS` (CF's JWKS is same-origin):
@@ -570,45 +573,69 @@ The family allowlist is the `mcp_saas_family` policy (reuses `family_emails`) �
 ```bash
 ssh root@$IP
 cd /opt/household-os/actual
+cp mcp.env mcp.env.bak-pre-cf      # rollback snapshot
+grep -E '^(AUTH_|OIDC_)' mcp.env   # REMOVE any existing AUTH_*/OIDC_* lines first — no duplicates
 cat >> mcp.env <<'OIDC'
 AUTH_PROVIDER=oidc
-OIDC_ISSUER=https://<team>.cloudflareaccess.com
-OIDC_RESOURCE=https://<cf-saas-oidc-client-id>
-OIDC_ACCEPTED_AUDIENCES=<cf-saas-oidc-client-id>
-OIDC_SCOPES=openid email
-AUTH_BUDGET_ACL={"you@gmail.com":["<budget-sync-id>"]}
+OIDC_ISSUER=https://<team>.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<cf-saas-oidc-client-id>
+OIDC_RESOURCE=https://<mcp_host>/http
+OIDC_ACCEPTED_AUDIENCES=https://claude.ai/api/mcp/auth_callback,<cf-saas-oidc-client-id>
+OIDC_SCOPES=
+OIDC_SCOPES_SUPPORTED=openid,email
+AUTH_BUDGET_ACL={"you@gmail.com":["*"],"spouse@gmail.com":["*"]}
 OIDC
-nano mcp.env          # fill the <...>; OIDC_RESOURCE needs the https:// prefix; leave MCP_SSE_AUTHORIZATION in place
+nano mcp.env          # fill the <...>
+grep -c '^AUTH_PROVIDER=' mcp.env          # must print 1
 docker compose up -d actual-mcp
-docker compose logs --tail=40 actual-mcp   # OIDC/JWKS init against the CF issuer, no errors
+docker compose logs --tail=40 actual-mcp   # expect: issuer = the per-app URL, "Scopes required: (none)",
+                                           # "Resolved JWKS URI from OIDC discovery", no OIDC_RESOURCE warning
 exit
 ```
 
-**7g-iii. Configure each AI-client connector** against the **CF** endpoints (not
-Google's): Authorization/Token URLs from the SaaS app's config screen, Client ID/Secret
-from the Terraform outputs, scopes `openid email`. Then run the §7d acceptance criteria
-and §7e write-path check. The **make-or-break additions** for this path:
+Check from the workstation that clients can discover the flow:
 
-- **(a)** discovery at the CF issuer exposes `authorization_endpoint` / `token_endpoint`
-  and Claude completes the PKCE flow (§7d criterion 1 positive).
-- **(b)** the server validates the presented token via JWKS — a JWT `id_token`, **not**
-  an opaque access token (the shared gating risk; §7d criteria 3/4/6 negatives).
-- **(c)** after the access token expires, the client **silently refreshes with no new
-  login prompt** — the true test of "stop re-auth prompts." Capture a token, wait past
-  `mcp_oidc_access_token_lifetime`, and confirm a tool call still succeeds.
+```bash
+curl -s https://<mcp_host>/.well-known/oauth-protected-resource/http   # resource = https://<mcp_host>/http,
+                                                                       # authorization_servers = [the per-app issuer]
+curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<mcp_host>/http \
+  -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'   # 401
+```
 
-Once 1–9 pass, remove `MCP_SSE_AUTHORIZATION` exactly as in §7f. **If (b) fails on CF**,
-fall back to the Google-direct block (§7a–7f) per ADR-0005's rollback contingency.
+To debug a rejected token, add `MCP_BRIDGE_LOG_LEVEL=debug` temporarily. At the default
+`info` level, auth rejections are not logged.
+
+**7g-iii. Configure each AI-client connector** with the URL plus the client ID/secret
+from the Terraform outputs (§5). The endpoints are discovered automatically. Then run
+the §7d acceptance criteria and the §7e write-path check. The **make-or-break
+additions** for this path, with results from the 2026-10 cutover:
+
+- **(a) ✅ Passed.** Discovery at the CF issuer exposes `authorization_endpoint` /
+  `token_endpoint`, and Claude.ai completes the PKCE flow. Claude.ai doesn't need
+  `code_challenge_methods_supported` advertised.
+- **(b) ✅ Passed.** CF's SaaS **access token is a JWT** that the server validates
+  against the same-origin JWKS. It isn't opaque.
+- **(c) Still to confirm:** after the access token expires
+  (`mcp_oidc_access_token_lifetime`), the client **silently refreshes with no new login
+  prompt**. That's the real test of "stop re-auth prompts". If Claude prompts again, try
+  adding `offline_access` to `OIDC_SCOPES_SUPPORTED`; upstream needed that for Gemini.
+
+Once 1–9 pass, remove `MCP_SSE_AUTHORIZATION` exactly as in §7f. **If (b) ever fails on
+CF**, upstream's alternative is CF Access **Managed OAuth** with
+`OIDC_TOKEN_SOURCE=cf-access-jwt-assertion`. Prefer it over the Google-direct rollback
+(§7a–7f).
 
 ---
 
 ## Operations
 
-- **Pin the image.** The compose pins `actual-mcp` to `:0.8.16` (off `:latest`) so
-  an upstream change can't surprise a process holding your financial credentials —
-  OIDC support landed in the 0.7.x line and the cross-origin JWKS fix
-  (`OIDC_JWKS_TRUSTED_HOSTS`, needed for Google) shipped in v0.8.1 (upstream #254/#255).
-  Bump the tag deliberately after reading release notes and re-run the smoke + auth tests.
+- **Pin the image.** The compose pins `actual-mcp` to `:0.22.11` (off `:latest`) so
+  an upstream change can't surprise a process holding your financial credentials.
+  Bump the tag deliberately after reading the release notes, then re-run the smoke and
+  auth tests. Two things to watch:
+  - The env-var semantics changed between 0.8.x and 0.22.x (`OIDC_RESOURCE`, `OIDC_SCOPES`).
+  - The server logs a warning when the Actual server is newer than its bundled
+    `@actual-app/api`. Upgrade the MCP image before, or together with, Actual minor
+    releases.
 - **Rotate the token** by editing `mcp.env` and `docker compose up -d actual-mcp`;
   update the connector. Do this if a device with the token is lost.
 - **Logs:** `docker compose logs -f actual-mcp`. Set `MCP_BRIDGE_STORE_LOGS=true`
@@ -620,7 +647,12 @@ fall back to the Google-direct block (§7a–7f) per ADR-0005's rollback conting
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Client gets the Cloudflare Access login page / HTML instead of MCP JSON | An Access app got attached to the MCP host | This host must have **no** Access application (ADR-0002). Remove it; keep only the proxied DNS record. |
-| 401 / unauthorized | Token mismatch | Confirm the connector's `Authorization: Bearer` matches `MCP_SSE_AUTHORIZATION` in `mcp.env`; restart the container after edits. |
+| 401 / unauthorized (Bearer mode) | Token mismatch | Confirm the connector's `Authorization: Bearer` matches `MCP_SSE_AUTHORIZATION` in `mcp.env`; restart the container after edits. |
+| Claude.ai login reaches CF Access + Google, then "auth failed"; no server log lines | The server rejects the token. Usually `OIDC_SCOPES` is non-empty (CF tokens have no `scope` claim) or the `aud` isn't accepted (CF sets `aud` to the client's redirect URI) | Set `OIDC_SCOPES=` (empty) and include the client's redirect URI in `OIDC_ACCEPTED_AUDIENCES`. Use `MCP_BRIDGE_LOG_LEVEL=debug` to see the rejection. |
+| Every token rejected right after the cutover | `OIDC_ISSUER` set to the bare team domain | CF SaaS issuers are per-app: `https://<team>.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<client-id>`. Copy `issuer` from that URL + `/.well-known/openid-configuration`. |
+| Startup warning about `OIDC_RESOURCE` vs the advertised `/http` path | `OIDC_RESOURCE` isn't the endpoint URL | Set `OIDC_RESOURCE=https://<mcp_host>/http`. MCP clients check that the metadata's `resource` matches the URL they connect to. |
+| Authenticated, but tool calls return 403 | `AUTH_BUDGET_ACL` matches no claim in the token | Key the entry on the user's email, or on their CF `user_id` (the token `sub`, shown in Zero Trust → Logs → Access). |
+| Duplicate `AUTH_PROVIDER`/`OIDC_*` lines in `mcp.env` | A new block appended without removing the old one | Keep exactly one of each (`grep -c '^AUTH_PROVIDER=' mcp.env` → 1). Don't rely on which duplicate wins. |
 | Cloudflare 526 / cert error | SSL not Full (strict), or wrong origin cert on the box | Set zone SSL to **Full (strict)**; re-copy `mcp-origin.pem`/`.key` from `terraform output`. |
 | `actual-mcp` can't reach Actual | Pointed at the public URL | Must be `http://actual-server:5006` (internal network), not the public domain. |
 | Empty/locked budget data | Missing E2E password | If Actual E2E is on (§10c), set `ACTUAL_BUDGET_PASSWORD` in `mcp.env`. |

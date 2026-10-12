@@ -42,6 +42,7 @@ admin_ip_cidr        = "203.0.113.4/32"
 # _client_secret for mcp.env + the AI-client connectors. The family gate lives in the
 # CF policy (family_emails), so it is NOT duplicated into AUTH_BUDGET_ACL.
 # enable_mcp_saas_oidc = true
+# cloudflare_team_domain = "myteam.cloudflareaccess.com"   # prints the exact OIDC issuer
 # mcp_oauth_redirect_uris = [
 #   "https://claude.ai/api/mcp/auth_callback",   # extend per each AI client's connector docs
 # ]

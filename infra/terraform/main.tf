@@ -439,9 +439,11 @@ resource "cloudflare_zero_trust_access_policy" "mcp_bypass" {
 #   • The family allowlist lives HERE (the policy below), enforced at login, so it
 #     is NOT duplicated into AUTH_BUDGET_ACL — that narrows to per-budget scoping.
 #
-# Issuer is https://<team>.cloudflareaccess.com; the app's client_id is the `aud`
-# the MCP server validates (OIDC_ACCEPTED_AUDIENCES). Copy client_id/secret from
-# the outputs into mcp.env at cutover (docs/mcp-budget-server.md §7).
+# Issuer is PER-APP: https://<team>.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<client_id>
+# (see the mcp_saas_oidc_issuer output). The access token's `aud` is the CLIENT'S
+# REDIRECT URI (one of var.mcp_oauth_redirect_uris), not the client_id, so those URIs
+# go in the MCP server's OIDC_ACCEPTED_AUDIENCES. The client_id/secret go into each
+# AI-client connector at cutover (docs/mcp-budget-server.md §5, §7g).
 #
 # ⚠️ Confirm the saas_app OIDC schema against the pinned cloudflare provider
 # (4.52.x, see versions.tf / .terraform.lock.hcl) with `terraform validate`
@@ -464,12 +466,15 @@ resource "cloudflare_zero_trust_access_application" "mcp_saas_oidc" {
     redirect_uris = var.mcp_oauth_redirect_uris
     # openid + email: the MCP server keys AUTH_BUDGET_ACL off the email claim.
     scopes = ["openid", "email"]
-    # authorization_code = the PKCE code flow; refresh_tokens = durable, revocable
-    # refresh for seamless sessions (ADR-0005 token-lifetime mechanics).
-    grant_types = ["authorization_code", "refresh_tokens"]
+    # authorization_code_with_pkce = the PKCE code flow Claude uses; refresh_tokens =
+    # durable, revocable refresh for seamless sessions (ADR-0005 token-lifetime
+    # mechanics). Must be the _with_pkce grant: the CF API rejects
+    # allow_pkce_without_client_secret alongside plain authorization_code (12130).
+    grant_types = ["authorization_code_with_pkce", "refresh_tokens"]
 
-    # Enable PKCE (ADR-0005). Claude presents a PKCE code challenge; allowing PKCE
-    # without requiring the client secret supports clients that register as public.
+    # Don't require the client secret at the token endpoint for the PKCE grant —
+    # supports clients that register as public. A client that does send the secret
+    # still works.
     allow_pkce_without_client_secret = true
 
     # Short access token + longer refresh token: durability without a long-lived

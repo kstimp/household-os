@@ -80,9 +80,10 @@ output "mcp_access_application_aud" {
 
 output "mcp_saas_oidc_client_id" {
   description = <<-EOT
-    Client ID of the MCP SaaS-OIDC app (ADR-0005). This is ALSO the `aud` the MCP server
-    validates: set it as OIDC_ACCEPTED_AUDIENCES in mcp.env (and, https://-prefixed, as
-    OIDC_RESOURCE). Empty unless var.enable_mcp_saas_oidc is true.
+    Client ID of the MCP SaaS-OIDC app (ADR-0005), for the AI-client connector config
+    (with mcp_saas_oidc_client_secret). NOT the token `aud`: CF sets `aud` to the client's
+    redirect URI (see var.mcp_oauth_redirect_uris). Empty unless var.enable_mcp_saas_oidc
+    is true.
   EOT
   value       = one(cloudflare_zero_trust_access_application.mcp_saas_oidc[*].saas_app[0].client_id)
 }
@@ -99,14 +100,18 @@ output "mcp_saas_oidc_client_secret" {
 
 output "mcp_saas_oidc_issuer" {
   description = <<-EOT
-    OIDC issuer to set as OIDC_ISSUER in mcp.env — your CF Zero Trust team domain,
-    https://<team>.cloudflareaccess.com. Provider v4's saas_app block does not expose the
-    team domain, so read it from Zero Trust → Settings → Custom Pages (team domain) and
-    substitute it here; discovery, authorization/token endpoints, and JWKS all live under
-    this issuer (same-origin JWKS → no OIDC_JWKS_TRUSTED_HOSTS). Empty unless
-    var.enable_mcp_saas_oidc is true.
+    OIDC issuer to set as OIDC_ISSUER in mcp.env. CF SaaS-OIDC issuers are PER-APP —
+    https://<team-domain>/cdn-cgi/access/sso/oidc/<client_id> — not the bare team domain,
+    and must match the token's `iss` exactly. Discovery (<issuer>/.well-known/openid-configuration),
+    the authorization/token endpoints, and JWKS all live under it (same-origin JWKS → no
+    OIDC_JWKS_TRUSTED_HOSTS). Set var.cloudflare_team_domain to get the exact value; until
+    then the team domain is a placeholder. Empty unless var.enable_mcp_saas_oidc is true.
   EOT
-  value       = var.enable_mcp_saas_oidc ? "https://<your-team>.cloudflareaccess.com" : ""
+  value = var.enable_mcp_saas_oidc ? format(
+    "https://%s/cdn-cgi/access/sso/oidc/%s",
+    var.cloudflare_team_domain != "" ? var.cloudflare_team_domain : "<team>.cloudflareaccess.com",
+    one(cloudflare_zero_trust_access_application.mcp_saas_oidc[*].saas_app[0].client_id),
+  ) : ""
 }
 
 output "actual_api_url" {
