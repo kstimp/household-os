@@ -11,12 +11,27 @@
   [CF generic OIDC SaaS app](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/saas-apps/generic-oidc-saas/),
   [CF "Secure MCP servers with Access for SaaS"](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/mcp-servers/saas-mcp/)
 
-> **Implementation correction (cutover):** the CF SaaS-OIDC issuer is **per-app** —
-> `https://<team>.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<client-id>` — not the
-> bare team domain written below. Confirmed from the live app's discovery document;
-> `OIDC_ISSUER` must match the token `iss` exactly. Also, PKCE requires the
-> `authorization_code_with_pkce` grant type (CF API error 12130 with plain
-> `authorization_code`). The decision itself is unchanged.
+> **Implementation outcome (cutover, 2026-10-12).** The decision held: Claude.ai now
+> authenticates through the CF Access SaaS-OIDC app, and the read path works end to
+> end. The gating check (b) **passed**: CF's SaaS access token is a JWT that validates
+> against the same-origin JWKS. Several details written below turned out wrong and are
+> corrected in `docs/mcp-budget-server.md` §7g and `mcp.env.example`:
+> - **The issuer is per-app**:
+>   `https://<team>.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<client-id>`, not the
+>   bare team domain.
+> - **The token `aud` is the client's redirect URI**, not the client ID. List each
+>   redirect URI in `OIDC_ACCEPTED_AUDIENCES`.
+> - **CF access tokens carry no `scope` claim**, so `OIDC_SCOPES` must be empty. Advertise
+>   scopes with `OIDC_SCOPES_SUPPORTED` instead.
+> - **`OIDC_RESOURCE` is this server's public MCP URL** (`https://<mcp_host>/http`), not
+>   an `https://<client-id>` placeholder.
+> - **PKCE needs the `authorization_code_with_pkce` grant type.** Plain
+>   `authorization_code` gets CF API error 12130.
+>
+> Two statements in the Context section were also wrong about the **deployment**. The
+> repo was right that it contained no Auth0, but the VPS had been running **Auth0 OIDC**
+> (undocumented drift, now replaced by this cutover). The deployed image was **0.22.11**,
+> not 0.8.16; the repo now pins 0.22.11.
 
 ## Context
 

@@ -440,9 +440,10 @@ resource "cloudflare_zero_trust_access_policy" "mcp_bypass" {
 #     is NOT duplicated into AUTH_BUDGET_ACL — that narrows to per-budget scoping.
 #
 # Issuer is PER-APP: https://<team>.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<client_id>
-# (see the mcp_saas_oidc_issuer output); the app's client_id is also the `aud`
-# the MCP server validates (OIDC_ACCEPTED_AUDIENCES). Copy client_id/secret from
-# the outputs into mcp.env at cutover (docs/mcp-budget-server.md §7).
+# (see the mcp_saas_oidc_issuer output). The access token's `aud` is the CLIENT'S
+# REDIRECT URI (one of var.mcp_oauth_redirect_uris), not the client_id, so those URIs
+# go in the MCP server's OIDC_ACCEPTED_AUDIENCES. The client_id/secret go into each
+# AI-client connector at cutover (docs/mcp-budget-server.md §5, §7g).
 #
 # ⚠️ Confirm the saas_app OIDC schema against the pinned cloudflare provider
 # (4.52.x, see versions.tf / .terraform.lock.hcl) with `terraform validate`

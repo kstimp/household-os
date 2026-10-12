@@ -80,9 +80,10 @@ output "mcp_access_application_aud" {
 
 output "mcp_saas_oidc_client_id" {
   description = <<-EOT
-    Client ID of the MCP SaaS-OIDC app (ADR-0005). This is ALSO the `aud` the MCP server
-    validates: set it as OIDC_ACCEPTED_AUDIENCES in mcp.env (and, https://-prefixed, as
-    OIDC_RESOURCE). Empty unless var.enable_mcp_saas_oidc is true.
+    Client ID of the MCP SaaS-OIDC app (ADR-0005), for the AI-client connector config
+    (with mcp_saas_oidc_client_secret). NOT the token `aud`: CF sets `aud` to the client's
+    redirect URI (see var.mcp_oauth_redirect_uris). Empty unless var.enable_mcp_saas_oidc
+    is true.
   EOT
   value       = one(cloudflare_zero_trust_access_application.mcp_saas_oidc[*].saas_app[0].client_id)
 }

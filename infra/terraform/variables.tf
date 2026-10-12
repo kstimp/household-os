@@ -122,6 +122,8 @@ variable "mcp_oauth_redirect_uris" {
     AI client that connects (Claude.ai, Desktop, Code). Only used when
     var.enable_mcp_saas_oidc is true. Exact URIs vary by client version — start from the
     client's connector docs (e.g. https://claude.ai/api/mcp/auth_callback) and extend.
+    CF puts the redirect URI in the access token's `aud`, so every URI here must ALSO be
+    listed in the MCP server's OIDC_ACCEPTED_AUDIENCES (mcp.env).
   EOT
   type        = list(string)
   default     = []
