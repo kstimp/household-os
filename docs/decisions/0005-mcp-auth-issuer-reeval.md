@@ -11,6 +11,13 @@
   [CF generic OIDC SaaS app](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/saas-apps/generic-oidc-saas/),
   [CF "Secure MCP servers with Access for SaaS"](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/mcp-servers/saas-mcp/)
 
+> **Implementation correction (cutover):** the CF SaaS-OIDC issuer is **per-app** —
+> `https://<team>.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<client-id>` — not the
+> bare team domain written below. Confirmed from the live app's discovery document;
+> `OIDC_ISSUER` must match the token `iss` exactly. Also, PKCE requires the
+> `authorization_code_with_pkce` grant type (CF API error 12130 with plain
+> `authorization_code`). The decision itself is unchanged.
+
 ## Context
 
 ADR-0004 moved the MCP server to **Google as the direct OIDC issuer**

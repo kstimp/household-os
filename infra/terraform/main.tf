@@ -439,7 +439,8 @@ resource "cloudflare_zero_trust_access_policy" "mcp_bypass" {
 #   • The family allowlist lives HERE (the policy below), enforced at login, so it
 #     is NOT duplicated into AUTH_BUDGET_ACL — that narrows to per-budget scoping.
 #
-# Issuer is https://<team>.cloudflareaccess.com; the app's client_id is the `aud`
+# Issuer is PER-APP: https://<team>.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<client_id>
+# (see the mcp_saas_oidc_issuer output); the app's client_id is also the `aud`
 # the MCP server validates (OIDC_ACCEPTED_AUDIENCES). Copy client_id/secret from
 # the outputs into mcp.env at cutover (docs/mcp-budget-server.md §7).
 #

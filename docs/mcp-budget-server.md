@@ -106,7 +106,9 @@ each identity to budgets. **The issuer is Cloudflare Access SaaS-OIDC (Option A,
 Option B (Google-direct) is retained only as the rollback contingency:
 
 - **OPTION A — Cloudflare Access SaaS-OIDC (the decision, ADR-0005).** CF Access acts as
-  the OIDC IdP via a **SaaS** application (issuer `https://<team>.cloudflareaccess.com`).
+  the OIDC IdP via a **SaaS** application. The issuer is **per-app** —
+  `https://<team>.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<client-id>`, not the bare
+  team domain — and must match the token's `iss` exactly.
   This keeps the family allowlist in the **CF Access policy** (one place, not duplicated
   into `AUTH_BUDGET_ACL`), serves JWKS **same-origin** (no `OIDC_JWKS_TRUSTED_HOSTS`), and
   exposes **configurable access/refresh token lifetimes** — the lever for "stop re-auth
@@ -116,7 +118,7 @@ Option B (Google-direct) is retained only as the rollback contingency:
 
   ```
   AUTH_PROVIDER=oidc
-  OIDC_ISSUER=https://<team>.cloudflareaccess.com
+  OIDC_ISSUER=https://<team>.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<cf-saas-oidc-client-id>
   OIDC_RESOURCE=https://<cf-saas-oidc-client-id>      # valid-URI form for mcp-auth
   OIDC_ACCEPTED_AUDIENCES=<cf-saas-oidc-client-id>    # bare client ID — must match `aud`
   OIDC_SCOPES=openid email
@@ -557,8 +559,9 @@ terraform plan                # review: 1 SaaS Access app + 1 family-allowlist p
 terraform apply
 terraform output -raw mcp_saas_oidc_client_id      # this is also the `aud`
 terraform output -raw mcp_saas_oidc_client_secret  # for the AI-client connector config
-# Issuer = https://<team>.cloudflareaccess.com (Zero Trust → Settings → team domain);
-# the `mcp_saas_oidc_issuer` output prints the template to fill in.
+# Issuer is PER-APP: https://<team>.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<client-id>.
+# Set cloudflare_team_domain in tfvars and `terraform output -raw mcp_saas_oidc_issuer`
+# prints it exactly; confirm against <issuer>/.well-known/openid-configuration.
 ```
 
 The family allowlist is the `mcp_saas_family` policy (reuses `family_emails`) — no
@@ -572,7 +575,7 @@ ssh root@$IP
 cd /opt/household-os/actual
 cat >> mcp.env <<'OIDC'
 AUTH_PROVIDER=oidc
-OIDC_ISSUER=https://<team>.cloudflareaccess.com
+OIDC_ISSUER=https://<team>.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<cf-saas-oidc-client-id>
 OIDC_RESOURCE=https://<cf-saas-oidc-client-id>
 OIDC_ACCEPTED_AUDIENCES=<cf-saas-oidc-client-id>
 OIDC_SCOPES=openid email

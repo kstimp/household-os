@@ -88,7 +88,7 @@ variable "enable_mcp_saas_oidc" {
   description = <<-EOT
     ADR-0005 (the decision): stand up a Cloudflare Access **SaaS** application (OIDC
     protocol) to act as the MCP server's OIDC issuer. This is the recommended per-user
-    auth path — CF Access is the IdP (issuer https://<team>.cloudflareaccess.com), the
+    auth path — CF Access is the IdP (per-app issuer under the team domain), the
     family allowlist lives in ONE place (the CF Access policy, not duplicated into
     AUTH_BUDGET_ACL), JWKS is same-origin, and access/refresh token lifetimes are
     configurable to "stop re-auth prompts."
@@ -104,6 +104,16 @@ variable "enable_mcp_saas_oidc" {
   EOT
   type        = bool
   default     = false
+}
+
+variable "cloudflare_team_domain" {
+  description = <<-EOT
+    Your Cloudflare Zero Trust team domain, e.g. "myteam.cloudflareaccess.com" (Zero Trust
+    → Settings → Custom Pages). Only used to print the exact MCP OIDC issuer in the
+    mcp_saas_oidc_issuer output — provider v4 does not expose it. Optional.
+  EOT
+  type        = string
+  default     = ""
 }
 
 variable "mcp_oauth_redirect_uris" {
