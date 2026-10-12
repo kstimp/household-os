@@ -29,11 +29,11 @@ services:
   # the gate. Secrets come from mcp.env (gitignored; copy from mcp.env.example).
   actual-mcp:
     # Pinned to a reviewed semver tag (ADR-0002 supply-chain note; ADR-0005).
-    # 0.22.11 is the deployed version, verified with the CF Access SaaS-OIDC cutover
-    # (docs/mcp-budget-server.md §7g). 0.22.x requires OIDC_RESOURCE to be an absolute
+    # 0.22.31 is the deployed version (SaaS-OIDC cutover was verified on 0.22.11, see
+    # docs/mcp-budget-server.md §7g). 0.22.x requires OIDC_RESOURCE to be an absolute
     # URL and treats OIDC_SCOPES as a comma-separated, ENFORCED list. Bump deliberately
     # after reading release notes and re-running the smoke + OIDC acceptance tests.
-    image: ghcr.io/agigante80/actual-mcp-server:0.22.11
+    image: ghcr.io/agigante80/actual-mcp-server:0.22.31
     restart: unless-stopped
     depends_on:
       - actual-server

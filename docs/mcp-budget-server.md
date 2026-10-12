@@ -628,7 +628,7 @@ CF**, upstream's alternative is CF Access **Managed OAuth** with
 
 ## Operations
 
-- **Pin the image.** The compose pins `actual-mcp` to `:0.22.11` (off `:latest`) so
+- **Pin the image.** The compose pins `actual-mcp` to `:0.22.31` (off `:latest`) so
   an upstream change can't surprise a process holding your financial credentials.
   Bump the tag deliberately after reading the release notes, then re-run the smoke and
   auth tests. Two things to watch:
