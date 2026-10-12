@@ -464,12 +464,15 @@ resource "cloudflare_zero_trust_access_application" "mcp_saas_oidc" {
     redirect_uris = var.mcp_oauth_redirect_uris
     # openid + email: the MCP server keys AUTH_BUDGET_ACL off the email claim.
     scopes = ["openid", "email"]
-    # authorization_code = the PKCE code flow; refresh_tokens = durable, revocable
-    # refresh for seamless sessions (ADR-0005 token-lifetime mechanics).
-    grant_types = ["authorization_code", "refresh_tokens"]
+    # authorization_code_with_pkce = the PKCE code flow Claude uses; refresh_tokens =
+    # durable, revocable refresh for seamless sessions (ADR-0005 token-lifetime
+    # mechanics). Must be the _with_pkce grant: the CF API rejects
+    # allow_pkce_without_client_secret alongside plain authorization_code (12130).
+    grant_types = ["authorization_code_with_pkce", "refresh_tokens"]
 
-    # Enable PKCE (ADR-0005). Claude presents a PKCE code challenge; allowing PKCE
-    # without requiring the client secret supports clients that register as public.
+    # Don't require the client secret at the token endpoint for the PKCE grant —
+    # supports clients that register as public. A client that does send the secret
+    # still works.
     allow_pkce_without_client_secret = true
 
     # Short access token + longer refresh token: durability without a long-lived
