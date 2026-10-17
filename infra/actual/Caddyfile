@@ -48,9 +48,20 @@ actual-api.example.com {
 # ../landing/public — see docker-compose.yml); there is no app container.
 # No COOP/COEP here: a static page needs none, and this is NOT Actual's block
 # (AGENTS.md rule 3 concerns only the Actual proxy above).
+# /data/* is generated JSON (budget-kpis.json from the budget-kpis service, mounted
+# at /srv/data); it sits behind the same Access app as the page. no-store so the
+# browser never shows a stale snapshot as current.
 example.com {
 	tls /certs/landing-origin.pem /certs/landing-origin.key
 
-	root * /srv/landing
-	file_server
+	handle /data/* {
+		root * /srv
+		header Cache-Control "no-store"
+		file_server
+	}
+
+	handle {
+		root * /srv/landing
+		file_server
+	}
 }

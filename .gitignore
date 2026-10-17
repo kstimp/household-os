@@ -20,6 +20,9 @@ mcp.env
 # Filled-in Actual HTTP API secrets (Actual password, E2E key, API key).
 actual-http-api.env
 !actual-http-api.env.example
+# Filled-in budget-kpis secrets (actual-http-api key, sync ID).
+budget-kpis.env
+!budget-kpis.env.example
 
 # ── Node (Hub backend / finance worker, Phase 2) ──
 node_modules/
