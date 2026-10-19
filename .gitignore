@@ -20,11 +20,20 @@ mcp.env
 # Filled-in Actual HTTP API secrets (Actual password, E2E key, API key).
 actual-http-api.env
 !actual-http-api.env.example
-# Filled-in budget-kpis secrets (actual-http-api key, sync ID).
-budget-kpis.env
-!budget-kpis.env.example
+# Filled-in Hub backend secrets (actual-http-api key, sync ID).
+hub.env
+!hub.env.example
 
-# ── Node (Hub backend / finance worker, Phase 2) ──
+# ── Python (Hub backend) ──
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*.db
+*.db-wal
+*.db-shm
+
+# ── Node (college app) ──
 node_modules/
 npm-debug.log*
 yarn-error.log*

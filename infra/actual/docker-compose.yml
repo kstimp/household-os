@@ -92,29 +92,32 @@ services:
       # access to the same @actual-app/api dataDir from two processes.
       - /mnt/data/actual-http-api:/app/data
 
-  # Budget KPIs for the hub landing page's Money card. A stdlib-only Python loop that
-  # reads (GET only) from actual-http-api over the internal network every 15 min and
-  # writes budget-kpis.json into the landing_data volume, which Caddy serves at
-  # https://<apex>/data/budget-kpis.json (behind the apex's Cloudflare Access app).
-  # The API key stays server-side. See docs/runbook-landing-updates.md §4 and ADR-0007.
-  budget-kpis:
-    image: python:3.13-alpine
+  # Household OS Hub backend (Python/FastAPI, ADR-0007). Minimal Phase 1 slice: a JSON
+  # API under /api on the apex (Caddy routes it; Cloudflare Access gates it) plus an
+  # in-process finance worker that reads (GET only) from actual-http-api over this
+  # internal network every 15 min and caches budget KPIs in SQLite. Not published to the
+  # host. See docs/runbook-hub-updates.md.
+  hub:
+    image: hub:latest
+    build:
+      context: ../hub
+      dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
       - actual-http-api
-    command: [ "python", "/app/budget_kpis.py" ]
+    expose:
+      - "8000"
     env_file:
       # Optional so a not-yet-created file doesn't break every other compose command;
-      # unconfigured, the service idles and the card shows "Budget figures unavailable".
-      - path: ./budget-kpis.env
+      # unconfigured, the finance worker is disabled and /api/health says so.
+      - path: ./hub.env
         required: false
     environment:
       ACTUAL_API_URL: "http://actual-http-api:5007/v1"
-      KPI_OUT_PATH: "/out/budget-kpis.json"
-      KPI_INTERVAL_SECONDS: "900"
+      HUB_DB_PATH: "/app/data/hub.db"
+      FINANCE_INTERVAL_SECONDS: "900"
     volumes:
-      - ../landing/budget-kpis:/app:ro
-      - landing_data:/out
+      - /mnt/data/hub:/app/data
 
   caddy:
     image: caddy:2
@@ -124,6 +127,8 @@ services:
       - actual-mcp
       - college-app
       - actual-http-api
+      # Deliberately not `hub`: a Hub failure must not keep Caddy (and Actual) down;
+      # Caddy just returns 502 on /api until the Hub is up.
     ports:
       - "80:80"
       - "443:443"
@@ -132,12 +137,9 @@ services:
       - ./certs:/certs:ro
       # Static hub landing page, served by Caddy's file_server (no app container).
       - ../landing/public:/srv/landing:ro
-      # Generated landing data (budget-kpis.json), written by the budget-kpis service.
-      - landing_data:/srv/data:ro
       - caddy_data:/data
       - caddy_config:/config
 
 volumes:
-  landing_data:
   caddy_data:
   caddy_config:

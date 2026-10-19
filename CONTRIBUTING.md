@@ -11,8 +11,8 @@ If you're an AI agent, also read **[AGENTS.md](AGENTS.md)** — it has extra gua
 ## Ground rules
 
 1. **This repo is docs- and infra-heavy.** Most changes are Terraform, Docker Compose,
-   shell scripts, and Markdown runbooks — not application code (the Hub backend isn't built
-   yet). Treat the runbooks as executable specifications: if you change the infra, update
+   shell scripts, and Markdown runbooks; application code is small (the college app and a
+   minimal Hub backend). Treat the runbooks as executable specifications: if you change the infra, update
    the runbook that describes it in the same change.
 2. **Never commit secrets.** See [Secrets](#secrets) below. `.gitignore` is your safety net,
    not your first line of defense.
@@ -86,6 +86,13 @@ the *why* in the body when it isn't obvious.
 - Deployment and update steps are in
   [`docs/runbook-college-updates.md`](docs/runbook-college-updates.md).
 
+### Hub backend (`infra/hub/`)
+
+- Python 3.13 + FastAPI, SQLite via the stdlib. Run tests with
+  `pip install -r requirements-dev.txt && pytest`; run locally with
+  `uvicorn hub.main:create_app --factory --reload`.
+- Deployment and update steps are in [`docs/runbook-hub-updates.md`](docs/runbook-hub-updates.md).
+
 ### Docs (`docs/`)
 
 - Setup guides (`install-*.md`) are written for a first-timer starting from zero — keep both
@@ -116,7 +123,7 @@ question. Don't write one for routine fixes.
 - `terraform.tfvars`, `*.auto.tfvars`, `*.tfstate*`, `.terraform/`
 - `*.pem`, `*.key`, `certs/`
 - `.env`, `.env.*` (the `*.env.example` templates are the exception and *should* be committed)
-- `mcp.env`, `actual-http-api.env`
+- `mcp.env`, `actual-http-api.env`, `hub.env`
 
 Secrets in scope include: Cloudflare/Hetzner API tokens, Google OAuth material, the Actual
 server password **and** the budget's end-to-end-encryption password, R2 access keys, the MCP
@@ -134,6 +141,7 @@ There's no CI-heavy test suite; verification is mostly manual and targeted:
 - **Docker stack:** `docker compose config` to validate, `docker compose up -d` +
   `docker compose ps` to confirm services come up healthy.
 - **College app:** `npm install && npm start`, then exercise the UI locally.
+- **Hub backend:** `cd infra/hub && pytest`.
 - **Runbooks:** the highest-value test here is *following your own runbook* end-to-end. An
   unexercised backup/restore runbook is a hope, not a backup (design §5.1).
 

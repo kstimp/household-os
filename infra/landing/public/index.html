@@ -177,7 +177,7 @@
           <p class="door-kicker">Finance</p>
           <h2>Money</h2>
           <p class="desc">Budgets, accounts and spending, kept in Actual.</p>
-          <!-- Filled from /data/budget-kpis.json (budget-kpis service); dashes are the no-JS / no-data fallback. -->
+          <!-- Filled from the Hub's /api/budget/kpis; dashes are the no-JS / no-data fallback. -->
           <dl class="kpis" aria-label="Budget health">
             <div class="kpi" id="kpi-uncat"><dt>Uncategorized</dt><dd>&mdash;</dd></div>
             <div class="kpi" id="kpi-overspent"><dt>Overspent</dt><dd>&mdash;</dd></div>
@@ -291,10 +291,9 @@
     set('stat-build', STATUS.build);
 
     // ── Budget KPIs (Money card) ───────────────────────────────────────────
-    // Real data: a server-side snapshot written every 15 min by the budget-kpis
-    // service from Actual (read-only). Missing or stale snapshots are said out
-    // loud rather than shown as current.
-    var STALE_AFTER_MIN = 60;
+    // Real data from the Hub backend: a snapshot refreshed every 15 min by its
+    // finance worker from Actual (read-only). Missing or stale snapshots are
+    // said out loud rather than shown as current (design §5.2).
     var RECONCILE_ALERT_DAYS = 31;
 
     function kpi(id, value, unit, alert, title) {
@@ -327,7 +326,7 @@
     }
 
     if (window.fetch) {
-      fetch('/data/budget-kpis.json', { cache: 'no-store' })
+      fetch('/api/budget/kpis', { cache: 'no-store' })
         .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
         .then(function (d) {
           kpi('kpi-uncat', d.uncategorized_transactions, 'txns', d.uncategorized_transactions > 0);
@@ -352,7 +351,8 @@
           }
 
           var age = Math.max(0, Math.round((now - new Date(d.generated_at)) / 60000));
-          set('money-sync', (age > STALE_AFTER_MIN ? 'Stale \u2014 updated ' : 'Updated ') + ago(age));
+          var stale = d.worker && d.worker.stale;
+          set('money-sync', (stale ? 'Stale \u2014 updated ' : 'Updated ') + ago(age));
         })
         .catch(function () {
           set('money-sync', 'Budget figures unavailable');
