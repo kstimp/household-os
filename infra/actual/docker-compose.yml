@@ -92,7 +92,7 @@ services:
       # access to the same @actual-app/api dataDir from two processes.
       - /mnt/data/actual-http-api:/app/data
 
-  # Household OS Hub backend (Python/FastAPI, ADR-0007). Minimal Phase 1 slice: a JSON
+  # Household OS Hub backend (Python/FastAPI, ADR-0008). Minimal Phase 1 slice: a JSON
   # API under /api on the apex (Caddy routes it; Cloudflare Access gates it) plus an
   # in-process finance worker that reads (GET only) from actual-http-api over this
   # internal network every 15 min and caches budget KPIs in SQLite. Not published to the

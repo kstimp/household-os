@@ -1,10 +1,10 @@
-# 0007 — Start the Hub backend in Python/FastAPI, reading Actual via the actual-http-api sidecar
+# 0008 — Start the Hub backend in Python/FastAPI, reading Actual via the actual-http-api sidecar
 
 - **Status:** Accepted
-- **Date:** 2026-10-19
+- **Date:** 2026-10-20
 - **Deciders:** Household OS owner
 - **Amends:** design-doc §3.1 ("Node.js (Express/Fastify) recommended")
-- **Related:** design-doc §2.4 (finance mirror), §2.6 (no write-back), §5.2 (heartbeats),
+- **Related:** ADR-0007 (origin lockdown), design-doc §2.4 (finance mirror), §2.6 (no write-back), §5.2 (heartbeats),
   §7 Phase 1 ("build a worker to pull and cache budget balances"),
   `docs/install-actual-http-api.md`, `docs/runbook-hub-updates.md`
 
@@ -59,7 +59,7 @@ Hub *owns* (e.g. the shopping board).
   reconciled transaction's date as a proxy.
 - `actual-http-api` and Actual versions must stay in step (already the sidecar's rule).
 - The current month for "overspent" is computed in UTC — can lag by hours at month start.
-- The apex origin (port 443) is open to the internet, as for every other host; Cloudflare
-  Access is enforced at the edge, not at the origin. Unchanged by this ADR, but `/api` now
-  serves finance summaries from the apex, which raises the value of locking the origin to
-  Cloudflare (IP allowlist or authenticated origin pulls).
+- `/api` serves finance summaries from the apex, so it relies on Cloudflare Access not being
+  bypassable. ADR-0007 (origin firewall admits only Cloudflare IPs) provides that; the Hub
+  adds no app-level auth of its own. Origin-side Access JWT validation remains the noted
+  upgrade path.

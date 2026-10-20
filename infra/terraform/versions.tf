@@ -7,7 +7,7 @@ terraform {
       version = "~> 1.49"
     }
     cloudflare = {
-      source  = "cloudflare/cloudflare"
+      source = "cloudflare/cloudflare"
       # NOTE: Cloudflare provider resource names drift between majors.
       # This config targets v4.40+. If you bump to v5, several resources
       # are renamed (e.g. cloudflare_record -> cloudflare_dns_record,

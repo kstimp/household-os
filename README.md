@@ -24,7 +24,7 @@ accounts** can reach it.
 | **MCP budget server** | AI (Claude) natural-language access to the budget over MCP | [`docs/mcp-budget-server.md`](docs/mcp-budget-server.md) |
 | **College fund calculator** | Small standalone Node/Express + SQLite savings app | [`infra/college/`](infra/college/) |
 | **Hub landing page** | Static family hub at the apex, served by Caddy's `file_server` | [`infra/landing/`](infra/landing/) |
-| **Hub backend** | Minimal Python/FastAPI Hub under `/api` on the apex; finance worker mirrors budget KPIs from Actual ([ADR-0007](docs/decisions/0007-hub-backend-python.md)) | [`infra/hub/`](infra/hub/) |
+| **Hub backend** | Minimal Python/FastAPI Hub under `/api` on the apex; finance worker mirrors budget KPIs from Actual ([ADR-0008](docs/decisions/0008-hub-backend-python.md)) | [`infra/hub/`](infra/hub/) |
 | **Design & decisions** | Full system design doc + Architecture Decision Records | [`docs/`](docs/), [`docs/decisions/`](docs/decisions/) |
 | **Operations runbooks** | Backups, OS/app updates, restores | [`docs/runbook-*.md`](docs/) |
 
@@ -108,6 +108,7 @@ Day-two runbooks live in [`docs/`](docs/):
 - [Backups & restore](docs/runbook-backups.md)
 - [OS security updates](docs/runbook-os-updates.md)
 - [Harden admin SSH with Tailscale](docs/install-tailscale.md)
+- [Origin firewall (Cloudflare-only 80/443)](docs/runbook-origin-firewall.md)
 - [Actual Budget updates](docs/runbook-actual-updates.md)
 - [MCP server updates](docs/runbook-mcp-updates.md)
 - [College app updates](docs/runbook-college-updates.md)

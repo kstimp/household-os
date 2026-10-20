@@ -13,7 +13,7 @@ decisions are recorded as ADRs in [`docs/decisions/`](docs/decisions/).
 
 **Current reality:** the implemented surface is **Phase 1** — Terraform + Docker infra for
 Actual Budget, an MCP budget server, a small college-fund calculator, the static landing page,
-and a **minimal Hub backend** (Python/FastAPI, ADR-0007) whose only feature so far is a
+and a **minimal Hub backend** (Python/FastAPI, ADR-0008) whose only feature so far is a
 read-only finance worker serving budget KPIs. The meal planner, e-ink panel, calendar/tasks,
 Whole Foods automation and the rest of the Hub are **designed but not built**. Don't assume
 code exists for them; don't scaffold them unless explicitly asked.

@@ -6,7 +6,7 @@
 **Depends on:** the `actual-http-api` sidecar ([`install-actual-http-api.md`](install-actual-http-api.md))
 **Verify:** load `https://stimpert.haus/api/health` in a signed-in browser, or from the VPS see §3 (the container has no host port)
 
-Why Python and why this shape: [ADR-0007](decisions/0007-hub-backend-python.md).
+Why Python and why this shape: [ADR-0008](decisions/0008-hub-backend-python.md).
 
 ```
 browser ──▶ Cloudflare Access ──▶ Caddy (apex)

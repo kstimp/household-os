@@ -182,6 +182,19 @@ variable "ssh_over_tailscale_only" {
   default     = false
 }
 
+variable "restrict_origin_to_cloudflare" {
+  description = <<-EOT
+    When true (default), the firewall admits tcp/80 and tcp/443 ONLY from Cloudflare's
+    published IP ranges (read live via the cloudflare_ip_ranges data source), so the origin
+    can't be reached around Cloudflare Access by someone who knows its IP. See ADR-0007.
+    When false, 80/443 are open to 0.0.0.0/0 and ::/0 again — break-glass only (e.g. the
+    Cloudflare ranges API is down and you must apply some other change). Admin SSH is
+    unaffected either way (see ssh_over_tailscale_only).
+  EOT
+  type        = bool
+  default     = true
+}
+
 variable "google_idp_name" {
   description = <<-EOT
     Name of the Google login method exactly as it appears in

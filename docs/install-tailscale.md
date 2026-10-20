@@ -200,6 +200,9 @@ one-line Terraform flip — no manual firewall edits.
    The plan should show an **in-place update** to `hcloud_firewall.hub` — never a
    replacement of `hcloud_server.hub`. If it wants to replace the server, stop and re-check;
    `user_data` drift is already ignored, so a server replacement means something else is wrong.
+   If you haven't applied the origin-firewall change yet ([ADR-0007](decisions/0007-origin-cloudflare-only.md)),
+   the same in-place update will also narrow the `80`/`443` rules to Cloudflare's IP ranges.
+   That's expected; see [runbook-origin-firewall.md](runbook-origin-firewall.md).
 
 3. Confirm the public path is now closed but the tailnet path still works:
 
@@ -211,9 +214,10 @@ one-line Terraform flip — no manual firewall edits.
    ssh root@household-os
    ```
 
-Done. SSH no longer has any public attack surface; `nmap`/Shodan see only `80`/`443`
-(which terminate at Cloudflare anyway) and the WireGuard UDP port, which drops anything
-that isn't a valid, authenticated Tailscale peer.
+Done. SSH no longer has any public attack surface. `nmap`/Shodan see only the WireGuard UDP
+port, which drops anything that isn't a valid, authenticated Tailscale peer. `80`/`443` accept
+only Cloudflare's IP ranges ([ADR-0007](decisions/0007-origin-cloudflare-only.md)), so a scan
+from anywhere else sees them as filtered.
 
 ---
 
