@@ -128,6 +128,7 @@ Google login (Cloudflare Access), not return JSON.
 |---|---|---|
 | Updated N min ago | Healthy. | — |
 | Stale — updated N h ago | Finance worker has not succeeded for 2+ intervals; the page shows the last good snapshot. | `docker compose logs hub` and `/api/health` → `last_error` (usually wrong key/Sync ID, or `actual-http-api` down) |
+| `/api/health` `last_error` starts `404 from GET /accounts:` | actual-http-api couldn't load the budget — almost always the Sync ID. The message after the colon is actual-http-api's own reason. | Compare `ACTUAL_BUDGET_SYNC_ID` in `hub.env` with Actual → Settings → Advanced → **Sync ID** (not the budget file ID/name), then `docker compose up -d hub` |
 | Budget figures unavailable | No snapshot yet (first run pending, `hub.env` missing) or the hub is down. | `docker compose ps hub`, `/api/health` |
 
 ### Rollback

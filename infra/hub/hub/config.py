@@ -18,12 +18,18 @@ class Settings:
         return bool(self.actual_api_key and self.actual_sync_id)
 
 
+def _env(name: str, default: str = "") -> str:
+    # Strip stray whitespace/CR (e.g. hub.env saved with Windows line endings), which
+    # would otherwise end up inside the sync ID in the request URL.
+    return os.environ.get(name, default).strip()
+
+
 def load() -> Settings:
     return Settings(
-        db_path=os.environ.get("HUB_DB_PATH", "hub.db"),
-        actual_api_url=os.environ.get("ACTUAL_API_URL", "http://actual-http-api:5007/v1").rstrip("/"),
-        actual_api_key=os.environ.get("ACTUAL_API_KEY", ""),
-        actual_sync_id=os.environ.get("ACTUAL_BUDGET_SYNC_ID", ""),
-        actual_encryption_password=os.environ.get("ACTUAL_BUDGET_ENCRYPTION_PASSWORD", ""),
-        finance_interval_seconds=int(os.environ.get("FINANCE_INTERVAL_SECONDS", "900")),
+        db_path=_env("HUB_DB_PATH", "hub.db"),
+        actual_api_url=_env("ACTUAL_API_URL", "http://actual-http-api:5007/v1").rstrip("/"),
+        actual_api_key=_env("ACTUAL_API_KEY"),
+        actual_sync_id=_env("ACTUAL_BUDGET_SYNC_ID"),
+        actual_encryption_password=_env("ACTUAL_BUDGET_ENCRYPTION_PASSWORD"),
+        finance_interval_seconds=int(_env("FINANCE_INTERVAL_SECONDS", "900")),
     )

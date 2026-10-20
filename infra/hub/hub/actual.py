@@ -4,11 +4,16 @@ Only GETs. Finance is a mirror (design §2.6): the Hub never writes to Actual.
 """
 
 import json
+import urllib.error
 import urllib.parse
 import urllib.request
 
 # getTransactions requires a lower bound; we want full history.
 SINCE_DATE = "1970-01-01"
+
+
+class ActualApiError(Exception):
+    pass
 
 
 class ActualClient:
@@ -23,8 +28,19 @@ class ActualClient:
         if params:
             url += "?" + urllib.parse.urlencode(params)
         req = urllib.request.Request(url, headers=self.headers)
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            return json.load(resp)["data"]
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                return json.load(resp)["data"]
+        except urllib.error.HTTPError as exc:
+            # actual-http-api explains failures in a JSON {"error": ...} body; without it a
+            # bare 404 is undiagnosable (it usually means the budget couldn't be loaded).
+            body = exc.read().decode("utf-8", "replace")
+            try:
+                parsed = json.loads(body)
+                detail = parsed.get("error", body) if isinstance(parsed, dict) else body
+            except ValueError:
+                detail = body
+            raise ActualApiError(f"{exc.code} from GET {path}: {detail.strip()[:300]}") from None
 
     def accounts(self) -> list[dict]:
         return self._get("/accounts")
