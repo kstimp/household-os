@@ -37,6 +37,8 @@ the apex's DNS record, certificate and Access app.
 IP=$(cd infra/terraform && terraform output -raw server_ipv4)
 ssh root@$IP "mkdir -p /opt/household-os/hub"
 scp -r infra/hub/* root@$IP:/opt/household-os/hub/
+# The landing page carries the Money-card KPI tiles that call /api — copy it too.
+scp -r infra/landing/* root@$IP:/opt/household-os/landing/
 scp infra/actual/docker-compose.yml infra/actual/Caddyfile infra/actual/hub.env.example root@$IP:/opt/household-os/actual/
 ```
 
@@ -45,6 +47,8 @@ scp infra/actual/docker-compose.yml infra/actual/Caddyfile infra/actual/hub.env.
 $IP = terraform -chdir=infra/terraform output -raw server_ipv4
 ssh root@$IP "mkdir -p /opt/household-os/hub"
 scp -r infra\hub\* root@${IP}:/opt/household-os/hub/
+# The landing page carries the Money-card KPI tiles that call /api — copy it too.
+scp -r infra\landing\* root@${IP}:/opt/household-os/landing/
 scp infra\actual\docker-compose.yml root@${IP}:/opt/household-os/actual/docker-compose.yml
 scp infra\actual\Caddyfile root@${IP}:/opt/household-os/actual/Caddyfile
 scp infra\actual\hub.env.example root@${IP}:/opt/household-os/actual/hub.env.example
@@ -80,10 +84,20 @@ If you skip this step the Hub still starts; the finance worker is disabled and
 mkdir -p /mnt/data/hub
 cd /opt/household-os/actual
 docker compose build hub
-docker compose up -d hub caddy     # caddy picks up the new /api route
+docker compose up -d hub
+# Caddy does NOT re-read a changed Caddyfile on its own, and `up -d caddy` won't recreate
+# it when its service definition is unchanged — reload explicitly to pick up /api:
+docker compose exec -w /etc/caddy caddy caddy reload
 docker compose ps hub
 docker compose logs --tail=20 hub
 # Expect: "Application startup complete." then "hub.worker finance ok"
+```
+
+Check the route end-to-end through Caddy (from the VPS, bypassing Cloudflare):
+```bash
+curl -sk --resolve stimpert.haus:443:127.0.0.1 https://stimpert.haus/api/health
+# Expect JSON with "finance": {... "last_error": null ...}. An empty 404 means Caddy is
+# still on the old config — re-run the reload above.
 ```
 
 Reload `https://stimpert.haus`: the Money card shows the four figures and "Updated N min ago".
