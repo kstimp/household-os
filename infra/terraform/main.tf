@@ -48,8 +48,29 @@ resource "hcloud_volume" "data" {
   format    = "ext4"
 }
 
-# Firewall: SSH from you only; HTTP/HTTPS from anywhere (Cloudflare proxies in
-# front, so the public sees Cloudflare, and the origin only needs 80/443 open).
+# Cloudflare's published edge ranges (https://www.cloudflare.com/ips/). Only read when
+# the restriction is on, so the break-glass path doesn't depend on this API call.
+data "cloudflare_ip_ranges" "edge" {
+  count = var.restrict_origin_to_cloudflare ? 1 : 0
+}
+
+locals {
+  web_source_ips = var.restrict_origin_to_cloudflare ? concat(
+    data.cloudflare_ip_ranges.edge[0].ipv4_cidr_blocks,
+    data.cloudflare_ip_ranges.edge[0].ipv6_cidr_blocks,
+  ) : ["0.0.0.0/0", "::/0"]
+}
+
+# Firewall: SSH from you only; HTTP/HTTPS only from Cloudflare's edge (ADR-0007).
+#
+# Every public hostname is orange-clouded and relies on Cloudflare (Access, WAF, the MCP
+# token gate's edge) in front of Caddy. If 80/443 were open to the world, anyone who
+# learned the origin IP could `curl --resolve` straight to Caddy and skip Access. So by
+# default (var.restrict_origin_to_cloudflare = true) 80/443 admit only Cloudflare's
+# published ranges, read live from the Cloudflare API on every plan — no hardcoded list
+# to go stale. A range change shows up as an in-place update to this firewall in the next
+# `terraform plan` (docs/runbook-origin-firewall.md §3). Setting the variable to false is
+# the break-glass that restores the old 0.0.0.0/0 rule.
 #
 # Admin SSH has two mutually exclusive shapes, chosen by var.ssh_over_tailscale_only:
 #   false (default) → the original rule: public tcp/22 open only from var.admin_ip_cidr.
@@ -91,14 +112,14 @@ resource "hcloud_firewall" "hub" {
     direction  = "in"
     protocol   = "tcp"
     port       = "80"
-    source_ips = ["0.0.0.0/0", "::/0"]
+    source_ips = local.web_source_ips
   }
 
   rule {
     direction  = "in"
     protocol   = "tcp"
     port       = "443"
-    source_ips = ["0.0.0.0/0", "::/0"]
+    source_ips = local.web_source_ips
   }
 }
 

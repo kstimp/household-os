@@ -24,6 +24,11 @@ admin_ip_cidr        = "203.0.113.4/32"
 # you can SSH in over the 100.x address — otherwise you lock out the public SSH path.
 # ssh_over_tailscale_only = false
 
+# Origin lockdown (ADR-0007, docs/runbook-origin-firewall.md). ON by default = tcp/80 and
+# tcp/443 accept only Cloudflare's published IP ranges, so nobody can skip Cloudflare Access by
+# hitting the origin IP directly. Set false ONLY as break-glass (reopens 80/443 to the world).
+# restrict_origin_to_cloudflare = true
+
 # Optional overrides (defaults: US East / cpx21):
 # server_type    = "cpx21"   # US locations need cpx*; cx22 is EU-only
 # location       = "ash"     # ash = US East, hil = US West, nbg1/fsn1/hel1 = EU

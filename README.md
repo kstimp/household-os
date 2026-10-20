@@ -107,6 +107,7 @@ Day-two runbooks live in [`docs/`](docs/):
 - [Backups & restore](docs/runbook-backups.md)
 - [OS security updates](docs/runbook-os-updates.md)
 - [Harden admin SSH with Tailscale](docs/install-tailscale.md)
+- [Origin firewall (Cloudflare-only 80/443)](docs/runbook-origin-firewall.md)
 - [Actual Budget updates](docs/runbook-actual-updates.md)
 - [MCP server updates](docs/runbook-mcp-updates.md)
 - [College app updates](docs/runbook-college-updates.md)

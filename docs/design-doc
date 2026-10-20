@@ -134,6 +134,7 @@ graph TD
 ### 4.1. Authentication
 * **Mechanism:** **Cloudflare Access** in front of the web app, configured with **Google as the identity provider**. No custom auth/session code in the application for human users.
 * **Authorization scope:** An explicit **family email allowlist** (individual `@gmail.com` addresses — there is no Google Workspace domain to key off of). Only listed accounts can reach the app at all.
+* **Origin lockdown:** Access is enforced at Cloudflare's edge, so the origin must not be reachable around it. The VPS firewall admits web traffic (`tcp/80`, `tcp/443`) **only from Cloudflare's published IP ranges** (ADR-0007). Origin-side validation of the Access JWT is the noted upgrade path.
 * **Rejected alternatives:** Tailscale/WireGuard overlay (every family member would need a VPN client — adoption non-starter); passkeys/local auth (redundant once SSO gates the edge); "Login with Google" wired into the app (couples app auth to a dependency and is unnecessary given Access handles it at the edge).
 
 ### 4.2. Roles & Data Visibility

@@ -276,7 +276,8 @@ terraform plan
 Review the output. You should see it plans to create:
 - 1 Hetzner VPS (`cx22`)
 - 1 Hetzner volume (10 GB, formatted ext4)
-- 1 Hetzner firewall (allows HTTP/HTTPS from anywhere, SSH only from your IP)
+- 1 Hetzner firewall (HTTP/HTTPS only from Cloudflare's IP ranges, SSH only from your IP; see
+  [ADR-0007](decisions/0007-origin-cloudflare-only.md))
 - 1 Cloudflare DNS A record (`budget.yourdomain.com` → server IP)
 - 1 Cloudflare Access application + policy (Google login, your family_emails list)
 - 1 Cloudflare Origin certificate (15-year TLS cert for Caddy to use)
@@ -606,7 +607,29 @@ Open an incognito window (or a different browser) and go to `https://budget.your
 You should hit the Cloudflare Access login page. Try signing in with a Google account
 **not** in your `family_emails` list — it should be blocked with an "Access denied" message.
 
-### 11c. Test the data volume persists across restarts
+### 11c. Confirm the origin only answers Cloudflare
+
+Terraform locked `tcp/80`/`tcp/443` to Cloudflare's IP ranges
+([ADR-0007](decisions/0007-origin-cloudflare-only.md)), so a request sent straight to the server's
+IP must **not** reach Caddy. From your own machine:
+
+**bash (macOS/Linux):**
+```bash
+SITE=$(cd infra/terraform && terraform output -raw budget_host)
+# Expect "000" and exit code 28 (timeout). A real HTTP status means the Access gate can be bypassed.
+curl -sk -o /dev/null -w '%{http_code}\n' --max-time 8 --resolve "$SITE:443:$IP" "https://$SITE/"; echo "exit: $?"
+```
+
+**PowerShell 7 (Windows):**
+```powershell
+$SITE = terraform -chdir=infra/terraform output -raw budget_host
+# curl.exe, not the PowerShell alias. Expect "000" and exit code 28 (timeout).
+curl.exe -sk -o NUL -w "%{http_code}`n" --max-time 8 --resolve "${SITE}:443:${IP}" "https://$SITE/"; "exit: $LASTEXITCODE"
+```
+
+Details, debugging and keeping the ranges current: [runbook-origin-firewall.md](runbook-origin-firewall.md).
+
+### 11d. Test the data volume persists across restarts
 
 The `ssh root@$IP` line is local (same in bash and PowerShell); the rest runs on the server:
 
@@ -853,6 +876,7 @@ The Hub never calls write endpoints — the design forbids write-back to Actual.
 |---|---|---|
 | `SharedArrayBufferMissing` / blank white app | COOP/COEP headers missing or **duplicated** at the proxy | Don't set these headers in Caddy — let Actual set them. Confirm `crossOriginIsolated === true` in the browser console. Check that Cloudflare isn't stripping them. |
 | Browser cert warning / Cloudflare 526 error | SSL mode not *Full (strict)*, or cert/key mismatch on the server | Set zone SSL to **Full (strict)** in Cloudflare. Re-copy `origin.pem`/`origin.key` from `terraform output`. |
+| Cloudflare **522** (connection timed out) | The DNS record is grey-clouded (DNS-only), so traffic isn't coming from Cloudflare and the origin firewall drops it; or Cloudflare added an IP range you haven't applied | Make sure the record is **proxied** (orange cloud). Run `terraform plan`: an in-place change to `hcloud_firewall.hub` means new Cloudflare ranges, so apply it. See [runbook-origin-firewall.md](runbook-origin-firewall.md). |
 | Cloudflare Access login page loops forever or never appears | Google IdP not added in Zero Trust, or DNS not proxied through Cloudflare | Check Zero Trust → Settings → Authentication for the Google IdP. Confirm the DNS record is **orange-clouded** (proxied), not grey. |
 | Cloudflare shows "Access denied" even for allowed emails | Email not in `family_emails`, or wrong capitalization | Double-check the email in `terraform.tfvars`; run `terraform apply` after changing it. |
 | Finance worker (Phase 2) gets 403 or redirect to Access login | Worker is hitting the public URL instead of internal network | Point the worker at `http://actual-server:5006` on the Docker internal network, not the public domain. |
