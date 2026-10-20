@@ -16,3 +16,4 @@ Status is one of `Proposed`, `Accepted`, `Superseded by NNNN`.
 | [0005](0005-mcp-auth-issuer-reeval.md) | MCP auth issuer: use Cloudflare Access SaaS-OIDC (Google-direct kept as rollback) | Accepted | 2026-07-20 |
 | [0006](0006-tailscale-admin-access.md) | Admin SSH over Tailscale; close public port 22 | Accepted | 2026-08-03 |
 | [0007](0007-origin-cloudflare-only.md) | Origin reachable only through Cloudflare (firewall allowlist of Cloudflare IPs) | Accepted | 2026-10-19 |
+| [0008](0008-hub-backend-python.md) | Start the Hub backend in Python/FastAPI via the actual-http-api sidecar (amends §3.1) | Accepted | 2026-10-20 |

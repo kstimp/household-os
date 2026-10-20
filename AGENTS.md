@@ -12,9 +12,11 @@ truth for architecture and, more importantly, for *why* decisions were made. Non
 decisions are recorded as ADRs in [`docs/decisions/`](docs/decisions/).
 
 **Current reality:** the implemented surface is **Phase 1** — Terraform + Docker infra for
-Actual Budget, an MCP budget server, and a small college-fund calculator. The Hub backend,
-meal planner, e-ink panel, and Whole Foods automation are **designed but not built**. Don't
-assume code exists for them; don't scaffold them unless explicitly asked.
+Actual Budget, an MCP budget server, a small college-fund calculator, the static landing page,
+and a **minimal Hub backend** (Python/FastAPI, ADR-0008) whose only feature so far is a
+read-only finance worker serving budget KPIs. The meal planner, e-ink panel, calendar/tasks,
+Whole Foods automation and the rest of the Hub are **designed but not built**. Don't assume
+code exists for them; don't scaffold them unless explicitly asked.
 
 ## Repository map
 
@@ -23,6 +25,7 @@ infra/terraform/   # Hetzner VPS + volume, Cloudflare DNS/Access/Origin-cert/R2
 infra/actual/      # docker-compose + Caddyfile for Actual + Caddy; backup/restore scripts
 infra/college/     # standalone Node/Express + SQLite college-fund calculator
 infra/landing/     # static hub landing page (apex), served by Caddy file_server
+infra/hub/         # Hub backend: Python/FastAPI + SQLite, served at /api on the apex
 docs/              # design-doc, install-*.md setup guides, runbook-*.md ops guides
 docs/decisions/    # Architecture Decision Records
 ```
@@ -60,6 +63,9 @@ docs/decisions/    # Architecture Decision Records
   **PowerShell** variants for commands that run on the user's machine. Match that style.
 - **Node code** (`infra/college/`): ES modules, `better-sqlite3` for storage. Match the
   existing style; don't add a framework or build step without being asked.
+- **Hub code** (`infra/hub/`): Python 3.13, FastAPI, stdlib `sqlite3` and `urllib`. Pinned
+  `requirements.txt`; keep dependencies minimal. Pure logic in testable functions, with pytest
+  tests in `infra/hub/tests/`. Finance access is read-only via `actual-http-api`.
 - **Terraform:** run `terraform fmt` and `terraform validate`; keep `terraform.tfvars.example`
   in sync with any new variable.
 
@@ -72,6 +78,8 @@ There is no heavy CI. Verify with the right lightweight check and report what yo
 - Docker: `docker compose config` to validate; `docker compose up -d` + `docker compose ps`
   to confirm health where feasible.
 - College app: `npm install && npm start` and exercise the affected path.
+- Hub: `cd infra/hub && pip install -r requirements-dev.txt && pytest`; for API changes also
+  run `uvicorn hub.main:create_app --factory` and hit the endpoints.
 - Docs: re-read your change end-to-end as if following it fresh.
 
 State plainly what you verified and what you couldn't (e.g. steps requiring live Cloudflare/

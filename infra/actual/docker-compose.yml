@@ -73,7 +73,7 @@ services:
   # See docs/install-actual-http-api.md. Pin the version tag — it should match
   # actual-server's release (26.x.x tracks Actual Budget 26.x.x).
   actual-http-api:
-    image: jhonderson/actual-http-api:26.6.1
+    image: jhonderson/actual-http-api:26.10.0
     restart: unless-stopped
     depends_on:
       - actual-server
@@ -92,6 +92,33 @@ services:
       # access to the same @actual-app/api dataDir from two processes.
       - /mnt/data/actual-http-api:/app/data
 
+  # Household OS Hub backend (Python/FastAPI, ADR-0008). Minimal Phase 1 slice: a JSON
+  # API under /api on the apex (Caddy routes it; Cloudflare Access gates it) plus an
+  # in-process finance worker that reads (GET only) from actual-http-api over this
+  # internal network every 15 min and caches budget KPIs in SQLite. Not published to the
+  # host. See docs/runbook-hub-updates.md.
+  hub:
+    image: hub:latest
+    build:
+      context: ../hub
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - actual-http-api
+    expose:
+      - "8000"
+    env_file:
+      # Optional so a not-yet-created file doesn't break every other compose command;
+      # unconfigured, the finance worker is disabled and /api/health says so.
+      - path: ./hub.env
+        required: false
+    environment:
+      ACTUAL_API_URL: "http://actual-http-api:5007/v1"
+      HUB_DB_PATH: "/app/data/hub.db"
+      FINANCE_INTERVAL_SECONDS: "900"
+    volumes:
+      - /mnt/data/hub:/app/data
+
   caddy:
     image: caddy:2
     restart: unless-stopped
@@ -100,6 +127,8 @@ services:
       - actual-mcp
       - college-app
       - actual-http-api
+      # Deliberately not `hub`: a Hub failure must not keep Caddy (and Actual) down;
+      # Caddy just returns 502 on /api until the Hub is up.
     ports:
       - "80:80"
       - "443:443"

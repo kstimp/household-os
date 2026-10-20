@@ -2,7 +2,7 @@
 
 **Stack:** Static page at `/opt/household-os/landing/public`, served by **Caddy's `file_server`** (no app container) from `/opt/household-os/actual/docker-compose.yml`
 **Served at:** the **apex** `stimpert.haus`, behind Cloudflare Access (Google SSO + family allowlist)
-**Data:** none (fully static)
+**Data:** none (static). The Money card's budget KPIs are fetched from the Hub backend at `/api/budget/kpis` — see [`runbook-hub-updates.md`](runbook-hub-updates.md); without the Hub the card shows "Budget figures unavailable" and everything else works
 **Verify:** `docker compose logs caddy` shows the apex site bound; an authenticated browser load of `https://stimpert.haus` renders the hub
 
 ---
@@ -147,7 +147,7 @@ If you get a TLS error at the origin, re-check that `landing-origin.pem/.key` la
 (`grep '^stimpert.haus' /opt/household-os/actual/Caddyfile`).
 
 ### Rollback
-The page has no data to restore — rollback is purely code:
+The page has no data to restore — rollback is purely code (the budget KPIs live in the Hub, see `runbook-hub-updates.md`):
 1. Revert the git commit locally.
 2. Re-run **§2 — Applying updates** with the reverted `infra/landing/`.
 

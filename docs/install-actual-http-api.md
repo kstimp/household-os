@@ -183,7 +183,7 @@ updated Caddyfile:
 ssh root@$IP
 cd /opt/household-os/actual
 
-# Pull the pinned image (26.6.1 — matches the version in docker-compose.yml)
+# Pull the pinned image (26.10.0 — matches the version in docker-compose.yml)
 docker compose pull actual-http-api
 
 # Restart everything: Caddy picks up the new Caddyfile block,
@@ -250,7 +250,7 @@ curl -sv "https://$API_HOST/v1/budgets/$SYNC_ID/months" 2>&1 | grep "< HTTP"
 
 ## Version pinning and upgrades
 
-The `docker-compose.yml` pins `actual-http-api` to a specific version tag (`26.6.1`).
+The `docker-compose.yml` pins `actual-http-api` to a specific version tag (`26.10.0`).
 The version number tracks Actual Budget's release — keep it in sync with `actual-server`:
 
 ```bash
@@ -258,7 +258,7 @@ The version number tracks Actual Budget's release — keep it in sync with `actu
 ssh root@$IP "docker inspect actualbudget/actual-server:latest | grep -i 'org.opencontainers.image.version'"
 
 # To upgrade actual-http-api, update the tag in docker-compose.yml and redeploy:
-# 1. Edit infra/actual/docker-compose.yml: change 26.6.1 to the new version
+# 1. Edit infra/actual/docker-compose.yml: change 26.10.0 to the new version
 # 2. scp the updated file to the server
 # 3. docker compose pull actual-http-api && docker compose up -d actual-http-api
 ```
@@ -300,5 +300,6 @@ exit
 | Container starts but budget data is empty | First sync still running | Wait 30–60 seconds and retry — `@actual-app/api` downloads a full budget copy on first run |
 | `ECONNREFUSED http://actual-server:5006` | `actual-server` not running, or `actual-http-api` started before it | `docker compose up -d actual-server` first; `depends_on` in `docker-compose.yml` should prevent this but `restart: unless-stopped` handles race conditions |
 | Swagger UI at `/api-docs/` returns 404 | Older image version | Confirm image is `26.6.1` or later: `docker compose images actual-http-api` |
+| Every budget request returns `500 "Unknown error while interacting with Actual Api"` | `actual-http-api` is older than `actual-server`: its bundled `@actual-app/api` can't open a budget written by a newer Actual | Bump the image tag to match the server's version (`docker compose exec actual-server node -e "console.log(require('./package.json').version)"` or Settings → About in Actual), then `docker compose pull actual-http-api && docker compose up -d actual-http-api` |
 | Experimental endpoints return `501 Not Implemented` | `EXPERIMENTAL_OPERATIONS_ENABLED=false` (intentional) | This is expected. If you need these endpoints, set `EXPERIMENTAL_OPERATIONS_ENABLED=true` in `actual-http-api.env` and restart — understand the risk first (they use Actual internals that may change without notice) |
 | Budget data is stale after a transaction | Sync runs on each API call | If data looks stale, check `docker compose logs actual-http-api` for sync errors; the most common cause is a wrong `ACTUAL_BUDGET_SYNC_ID` |

@@ -106,6 +106,12 @@
   .door-kicker { font-family: var(--font-body); text-transform: uppercase; letter-spacing: .1em; font-size: 10px; color: var(--color-accent-700); margin: 0 0 var(--space-3); }
   .door h2 { font-family: var(--font-heading); font-weight: 400; font-size: 34px; line-height: 1.1; margin: 0 0 var(--space-2); }
   .door p.desc { font-family: var(--font-body); font-size: 14px; line-height: 1.6; color: var(--color-neutral-700); margin: 0; max-width: 30ch; }
+  .kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); margin: var(--space-4) 0 var(--space-4); padding: 0; }
+  .kpi { margin: 0; }
+  .kpi dt { font-family: var(--font-body); text-transform: uppercase; letter-spacing: .09em; font-size: 9px; color: var(--color-neutral-500); margin: 0 0 2px; }
+  .kpi dd { font-family: var(--font-heading); font-size: 24px; line-height: 1.1; margin: 0; font-variant-numeric: lining-nums tabular-nums; }
+  .kpi dd small { font-family: var(--font-body); font-size: 10px; color: var(--color-neutral-600); }
+  .kpi.is-alert dd { color: var(--color-accent-700); }
   .door-foot { display: flex; align-items: center; justify-content: space-between; padding-top: var(--space-4); border-top: 1px solid var(--color-divider); font-family: var(--font-body); font-size: 11px; color: var(--color-neutral-600); font-variant-numeric: tabular-nums; }
   .door-foot .status { display: flex; align-items: center; gap: 7px; }
   .arrow { font-size: 14px; color: var(--color-accent-700); transition: transform .18s; }
@@ -127,6 +133,7 @@
     .sidebar { border-right: 0; border-bottom: 1px solid var(--color-divider); }
     .main { padding: var(--space-6) var(--space-4) var(--space-8); }
     .doors { grid-template-columns: 1fr; gap: var(--space-6); }
+    .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
 </style>
 </head>
@@ -170,9 +177,16 @@
           <p class="door-kicker">Finance</p>
           <h2>Money</h2>
           <p class="desc">Budgets, accounts and spending, kept in Actual.</p>
+          <!-- Filled from the Hub's /api/budget/kpis; dashes are the no-JS / no-data fallback. -->
+          <dl class="kpis" aria-label="Budget health">
+            <div class="kpi" id="kpi-uncat"><dt>Uncategorized</dt><dd>&mdash;</dd></div>
+            <div class="kpi" id="kpi-overspent"><dt>Overspent</dt><dd>&mdash;</dd></div>
+            <div class="kpi" id="kpi-unrec"><dt>Unreconciled</dt><dd>&mdash;</dd></div>
+            <div class="kpi" id="kpi-reconciled"><dt>Reconciled</dt><dd>&mdash;</dd></div>
+          </dl>
         </div>
         <div class="door-foot">
-          <span class="status"><span class="dot"></span><span id="money-sync">Synced 4 min ago</span></span>
+          <span class="status"><span class="dot"></span><span id="money-sync">Budget figures loading&hellip;</span></span>
           <span class="arrow">&rarr;</span>
         </div>
       </a>
@@ -255,7 +269,6 @@
     // TODO(phase-2): populate STATUS from the Hub /health API instead of literals.
     var STATUS = {
       svcStatus:   'All services responding',
-      moneySync:   'Synced 4 min ago',
       collegeSync: 'Updated today',
       services:    '3 of 3 up',
       backup:      'Streaming to R2',
@@ -271,12 +284,80 @@
     set('greeting', greeting);
     set('today', now.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' }));
     set('svc-status', STATUS.svcStatus);
-    set('money-sync', STATUS.moneySync);
     set('college-sync', STATUS.collegeSync);
     set('stat-services', STATUS.services);
     set('stat-backup', STATUS.backup);
     set('stat-access', STATUS.access);
     set('stat-build', STATUS.build);
+
+    // ── Budget KPIs (Money card) ───────────────────────────────────────────
+    // Real data from the Hub backend: a snapshot refreshed every 15 min by its
+    // finance worker from Actual (read-only). Missing or stale snapshots are
+    // said out loud rather than shown as current (design §5.2).
+    var RECONCILE_ALERT_DAYS = 31;
+
+    function kpi(id, value, unit, alert, title) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      var dd = el.querySelector('dd');
+      dd.textContent = value;
+      if (unit) {
+        var small = document.createElement('small');
+        small.textContent = ' ' + unit;
+        dd.appendChild(small);
+      }
+      el.classList.toggle('is-alert', !!alert);
+      if (title) el.title = title;
+    }
+
+    function ago(minutes) {
+      if (minutes < 1) return 'just now';
+      if (minutes < 60) return minutes + ' min ago';
+      var h = Math.round(minutes / 60);
+      return h < 48 ? h + ' h ago' : Math.round(h / 24) + ' days ago';
+    }
+
+    function daysSince(isoDate) {
+      // Local-midnight parse so "today" counts as 0 regardless of timezone.
+      var p = isoDate.split('-');
+      var then = new Date(+p[0], +p[1] - 1, +p[2]);
+      var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      return Math.round((today - then) / 86400000);
+    }
+
+    if (window.fetch) {
+      fetch('/api/budget/kpis', { cache: 'no-store' })
+        .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+        .then(function (d) {
+          kpi('kpi-uncat', d.uncategorized_transactions, 'txns', d.uncategorized_transactions > 0);
+          kpi('kpi-overspent', d.overspent_categories,
+              d.overspent_categories === 1 ? 'category' : 'categories',
+              d.overspent_categories > 0,
+              (d.overspent_category_names || []).join(', '));
+          kpi('kpi-unrec', d.unreconciled_transactions, 'txns', false);
+
+          var s = d.stalest_reconciliation;
+          var detail = (d.accounts || []).map(function (a) {
+            return a.account + ': ' + (a.last_reconciled || 'never');
+          }).join('\n');
+          if (!s) {
+            kpi('kpi-reconciled', '\u2014', '', false);
+          } else if (!s.last_reconciled) {
+            kpi('kpi-reconciled', 'Never', s.account, true, detail);
+          } else {
+            var days = daysSince(s.last_reconciled);
+            kpi('kpi-reconciled', days, 'days ago', days > RECONCILE_ALERT_DAYS,
+                'Oldest: ' + s.account + '\n' + detail);
+          }
+
+          var age = Math.max(0, Math.round((now - new Date(d.generated_at)) / 60000));
+          var stale = d.worker && d.worker.stale;
+          set('money-sync', (stale ? 'Stale \u2014 updated ' : 'Updated ') + ago(age));
+        })
+        .catch(function () {
+          set('money-sync', 'Budget figures unavailable');
+        });
+    }
   })();
 </script>
 </body>

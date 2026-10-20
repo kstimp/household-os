@@ -181,6 +181,19 @@ Keep these facts in mind when updating Actual:
   server is newer than that bundled version, upgrade the MCP image before (or alongside)
   the Actual minor release.
 
+### 4a — The `actual-http-api` sidecar has the same caveat (and the Hub depends on it)
+
+`actual-http-api` (`jhonderson/actual-http-api`, [`install-actual-http-api.md`](install-actual-http-api.md))
+also bundles `@actual-app/api`, and its tags track Actual's (`26.10.0` ↔ Actual `v26.10.0`).
+It is pinned, so it does **not** move when Actual does. If it falls behind, every budget
+request fails with `500 "Unknown error while interacting with Actual Api"` — which shows up
+as a stale/unavailable Money card on the hub, since the Hub reads Actual through it
+([`runbook-hub-updates.md`](runbook-hub-updates.md)).
+
+**After every Actual update,** bump `actual-http-api` to the matching tag (see
+[its version-pinning section](install-actual-http-api.md#version-pinning-and-upgrades)),
+then check `docker compose logs --tail=20 hub` shows `hub.worker finance ok`.
+
 ---
 
 ## 5 — Recommended: pin a version tag instead of `:latest`
